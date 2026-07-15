@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# Фиксируем абсолютный базовый путь проекта Ulysses
+PROJECT_ROOT="/home/michael/Ulysses"
+
+# Пробрасываем жесткие абсолютные пути для Python
+export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/ulysses-backend:${PYTHONPATH}"
+
+# Запускаем строго через venv корня, передавая контекст вызова ($@)
+uv run --project "${PROJECT_ROOT}" python -m cli "$@"
