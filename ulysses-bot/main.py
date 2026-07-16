@@ -40,7 +40,8 @@ if not BOT_TOKEN:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+# bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # ============================================================
@@ -48,12 +49,19 @@ dp = Dispatcher()
 # ============================================================
 
 def get_subscriptions_keyboard(tariffs: list = None) -> InlineKeyboardMarkup:
-    """Клавиатура тарифов (данные приходят из бэкенда)"""
+    """Клавиатура с чистым текстом без эмодзи и короткими callback-данными."""
     buttons = []
     if tariffs:
         for t in tariffs:
-            buttons.append([InlineKeyboardButton(text=t["name_ru"], callback_data=f"tariff_{t['slug']}")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")])
+            # Очищаем имя от эмодзи и длинных тире для 100% совместимости
+            clean_name = t["name_ru"].replace("🎁 ", "").replace("📅 ", "").replace("—", "-")
+
+            # Вместо 'tariff_sub_free' делаем короткий слаг 'num_' + индекс
+            slug = t["slug"].replace("sub_", "") # останется 'free', '1m', '3m'
+
+            buttons.append([InlineKeyboardButton(text=clean_name, callback_data=f"t_{slug}")])
+
+    buttons.append([InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -77,19 +85,28 @@ KEYBOARDS = {
 
 
 async def api_call(method: str, url: str, **kwargs) -> dict | None:
-    """Единый helper для запросов к бэкенду."""
+    """Единый helper для запросов к бэкенду с глубоким логированием сырых данных."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             if method == "GET":
                 resp = await client.get(url, **kwargs)
             else:
                 resp = await client.post(url, json=kwargs.get("json"))
+
             if resp.status_code == 200:
-                return resp.json()
+                # 🌟 ИСПРАВЛЕНИЕ: Логируем сырой текст, который прислал бэкенд
+                logger.info(f"📡 [API СЫРОЙ ОТВЕТ] от {url} ➔ {resp.text[:200]}")
+                try:
+                    return resp.json()
+                except Exception as parse_err:
+                    logger.error(f"💥 Ошибка вызова resp.json()! Бэкенд прислал НЕ-JSON строку: {parse_err}")
+                    return {"state": "error", "message": resp.text, "keyboard": "back"}
+
             logger.error(f"API {method} {url} → {resp.status_code}: {resp.text}")
     except Exception as e:
         logger.error(f"API error: {e}")
     return None
+
 
 
 def format_balance_from_state(balance: dict) -> str:
@@ -113,28 +130,63 @@ def format_balance_from_state(balance: dict) -> str:
 # ОБРАБОТЧИКИ КОМАНД
 # ============================================================
 
+from aiogram.enums import ParseMode
+
+import traceback
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    logger.info(f"📥 /start от {message.from_user.id}")
+    logger.info(f"📥 [SIMPLE START] Начат процесс обработки /start от {message.from_user.id}")
 
-    # Deep Link
-    if " " in message.text:
-        uuid_arg = message.text.split(" ", 1)[1].strip()
-        resp = await api_call("POST", f"{BACKEND_API_URL}/api/user/link-telegram",
-                              json={"uuid": uuid_arg, "tg_user_id": message.from_user.id, "tg_username": message.from_user.username})
-        if resp and resp.get("status") == "success":
-            await message.answer(resp.get("message", "🎉 Аккаунт привязан!"))
-        else:
-            await message.answer("⚠️ Не удалось привязать аккаунт.")
+    # Ультра-простая клавиатура: только одна кнопка
+    simple_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Посмотреть тарифы", callback_data="show_tariffs")]
+    ])
 
-    # Получить состояние
-    state = await api_call("GET", f"{BACKEND_API_URL}/api/bot/state?tg_user_id={message.from_user.id}")
-    if not state:
-        await message.answer("⚠️ Сервис временно недоступен.", reply_markup=KEYBOARDS["back"]())
+    # Текст без каких-либо звездочек и спецсимволов разметки
+    welcome_text = (
+        "👋 Добро пожаловать в Ulysses Lab VPN!\n\n"
+        "Нажмите на кнопку ниже, чтобы открыть список доступных тарифных планов."
+    )
+
+    try:
+        # Отправляем как сырой чистый текст без parse_mode
+        sent_msg = await message.answer(welcome_text, reply_markup=simple_keyboard, parse_mode=None)
+        logger.info(f"✅ [SIMPLE START] Сообщение №{sent_msg.message_id} отправлено успешно!")
+    except Exception as e:
+        logger.error(f"❌ [SIMPLE START] Ошибка отправки: {e}")
+
+@dp.callback_query(F.data == "show_tariffs")
+async def btn_show_tariffs(callback: CallbackQuery):
+    """
+    Обработчик клика по кнопке 'Посмотреть тарифы'.
+    Запрашивает актуальный JSON тарифов напрямую из API биллинга.
+    """
+    await callback.answer()
+    logger.info("🔍 Пользователь запросил отображение тарифной сетки")
+
+    # Делаем чистый GET запрос к отрефакторенному роутеру биллинга
+    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+
+    if not tariffs_resp:
+        await callback.message.edit_text(
+            "⚠️ Не удалось загрузить тарифную сетку. Сервис биллинга временно недоступен.",
+            reply_markup=KEYBOARDS["back"]()
+        )
         return
 
-    keyboard = KEYBOARDS.get(state.get("keyboard", "back"), KEYBOARDS["back"])()
-    await message.answer(state["message"], reply_markup=keyboard)
+    # Преобразуем структуру словаря в плоский список для генератора кнопок
+    tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()]
+
+    # Генерируем клавиатуру тарифов с короткими callback-данными (t_free, t_1m и т.д.)
+    keyboard = get_subscriptions_keyboard(tariffs)
+
+    # Меняем текст и выводим синие кнопки тарифов без HTML и Markdown (чистый текст)
+    await callback.message.edit_text(
+        "🛒 Выберите подходящий тарифный план для старта Ulysses VPN:",
+        reply_markup=keyboard,
+        parse_mode=None
+    )
 
 
 @dp.message(Command("balance"))
@@ -178,19 +230,43 @@ async def cmd_logout(message: Message):
 # CALLBACK — все действия через bot/action
 # ============================================================
 
+# ============================================================
+# CALLBACK — Маршрутизация кликов
+# ============================================================
+
 @dp.callback_query(F.data == "back_to_menu")
 async def btn_back(callback: CallbackQuery):
-    await callback.answer()
-    state = await api_call("GET", f"{BACKEND_API_URL}/api/bot/state?tg_user_id={callback.from_user.id}")
-    keyboard = KEYBOARDS.get(state["keyboard"], KEYBOARDS["back"])() if state else KEYBOARDS["back"]()
-    await callback.message.edit_text(state["message"] if state else "📋 Меню", reply_markup=keyboard)
+    # Ловим исключение, если текст сообщения не изменился, чтобы бот не падал в консоли
+    try:
+        state = await api_call("GET", f"{BACKEND_API_URL}/api/bot/state?tg_user_id={callback.from_user.id}")
+        if not state:
+            await callback.answer("⚠️ Сервис временно недоступен.")
+            return
+
+        kb_name = state.get("keyboard", "back")
+        if kb_name == "tariffs":
+            # 🌟 ИСПРАВЛЕНИЕ: если бэкенд просит показать тарифы, запрашиваем их из API биллинга
+            tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+            tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
+            keyboard = get_subscriptions_keyboard(tariffs)
+        else:
+            keyboard = KEYBOARDS.get(kb_name, KEYBOARDS["back"])()
+
+        await callback.message.edit_text(state["message"] if state else "📋 Главное меню", reply_markup=keyboard)
+        await callback.answer()
+    except Exception as e:
+        # Если прилетело "message is not modified", просто гасим уведомление в ТГ без падения бота
+        if "message is not modified" in str(e):
+            await callback.answer("Вы уже находитесь в главном меню")
+        else:
+            logger.error(f"Ошибка в btn_back: {e}")
+            await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("action_"))
 async def btn_action(callback: CallbackQuery):
     await callback.answer()
     action = callback.data.replace("action_", "")
-    await callback.message.edit_text("⏳ Загрузка...")
 
     state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
                            json={"tg_user_id": callback.from_user.id, "action": action})
@@ -199,19 +275,45 @@ async def btn_action(callback: CallbackQuery):
         await callback.message.edit_text("⚠️ Сервис временно недоступен.", reply_markup=KEYBOARDS["back"]())
         return
 
-    keyboard = KEYBOARDS.get(state.get("keyboard", "back"), KEYBOARDS["back"])()
-
-    if state.get("state") == "balance" and state.get("balance"):
-        await callback.message.edit_text(format_balance_from_state(state["balance"]), reply_markup=keyboard)
+    kb_name = state.get("keyboard", "back")
+    if kb_name == "tariffs":
+        # 🌟 ИСПРАВЛЕНИЕ: дублируем динамическую подгрузку тарифов и для экшенов
+        tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+        tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
+        keyboard = get_subscriptions_keyboard(tariffs)
     else:
-        await callback.message.edit_text(state.get("message", "OK"), reply_markup=keyboard)
+        keyboard = KEYBOARDS.get(kb_name, KEYBOARDS["back"])()
 
+    try:
+        if state.get("state") == "balance" and state.get("balance"):
+            await callback.message.edit_text(format_balance_from_state(state["balance"]), reply_markup=keyboard)
+        else:
+            await callback.message.edit_text(state.get("message", "OK"), reply_markup=keyboard)
+    except Exception as e:
+        if "message is not modified" not in str(e):
+            logger.error(f"Ошибка изменения текста в экшене: {e}")
 
-@dp.callback_query(F.data.startswith("tariff_"))
+@dp.callback_query(F.data.startswith("t_") | F.data.startswith("tariff_"))
 async def btn_tariff(callback: CallbackQuery):
+    """
+    Универсальный обработчик клика по кнопке любого тарифа.
+    Восстанавливает слаг и шлет POST запрос на покупку/активацию в бэкенд.
+    """
     await callback.answer()
-    tariff_slug = callback.data.replace("tariff_", "")
 
+    # 1. Извлекаем чистый слаг тарифа из callback_data
+    raw_data = callback.data
+    if raw_data.startswith("tariff_"):
+        tariff_slug = raw_data.replace("tariff_", "")
+    else:
+        # Если прилетел короткий t_free -> восстанавливаем в sub_free
+        short_slug = raw_data.replace("t_", "")
+        # Если слаг уже начинается на sub_, берем его, иначе подставляем префикс
+        tariff_slug = short_slug if short_slug.startswith("sub_") else f"sub_{short_slug}"
+
+    logger.info(f"💰 Пользователь кликнул по тарифу. Исходный data: {raw_data} ➔ Целевой слаг для бэкенда: {tariff_slug}")
+
+    # 2. Отправляем экшен покупки на бэкенд FastAPI
     state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
                            json={
                                "tg_user_id": callback.from_user.id,
@@ -222,8 +324,15 @@ async def btn_tariff(callback: CallbackQuery):
                                }
                            })
 
-    keyboard = KEYBOARDS.get(state["keyboard"], KEYBOARDS["back"])() if state else KEYBOARDS["back"]()
-    await callback.message.edit_text(state["message"] if state else "⚠️ Ошибка.", reply_markup=keyboard)
+    if not state:
+        await callback.message.edit_text("⚠️ Ошибка обработки запроса биллинга.", reply_markup=KEYBOARDS["back"]())
+        return
+
+    # 3. Подгружаем клавиатуру ответа
+    keyboard = KEYBOARDS.get(state.get("keyboard", "back"), KEYBOARDS["back"])()
+
+    # Выводим ответное сообщение (результат активации триала или инвойс)
+    await callback.message.edit_text(state.get("message", "Операция успешно обработана"), reply_markup=keyboard, parse_mode=None)
 
 
 # ============================================================

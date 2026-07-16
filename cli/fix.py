@@ -85,3 +85,30 @@ def fix_invoices():
             console.print(f"[red]❌ Ошибка подключения к бэкенду: {e}[/red]")
 
     asyncio.run(_cleanup())
+
+# Добавьте этот код в самый конец файла cli/fix.py
+
+@fix.command(name="retry")
+@click.argument("subscription_id", type=int)
+def fix_retry(subscription_id: int):
+    """Принудительно перезапустить provisioning для конкретной подписки по её ID"""
+    console.print(f"[yellow]⏳ Отправка запроса на повтор активации подписки #[bold]{subscription_id}[/bold]...[/yellow]")
+
+    async def _retry():
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Делаем POST запрос к нашему отрефакторенному эндпоинту биллинга
+                response = await client.post(f"{BACKEND_API_URL}/api/billing/retry-provisioning/{subscription_id}")
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status") == "activated":
+                        console.print(f"[green]✅ Успешно: Подписка #[bold]{subscription_id}[/bold] активирована в Hiddify![/green]")
+                    else:
+                        console.print(f"[yellow]⚠️ Бэкенд вернул статус: {data}[/yellow]")
+                else:
+                    console.print(f"[red]❌ Ошибка бэкенда: HTTP {response.status_code} - {response.text}[/red]")
+        except Exception as e:
+            console.print(f"[red]❌ Ошибка подключения к бэкенду: {e}[/red]")
+
+    asyncio.run(_retry())

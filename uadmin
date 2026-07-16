@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Фиксируем абсолютный базовый путь проекта Ulysses
-PROJECT_ROOT="/home/michael/Ulysses"
+PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Пробрасываем жесткие абсолютные пути для Python
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/ulysses-backend:${PYTHONPATH}"

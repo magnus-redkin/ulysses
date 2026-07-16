@@ -8,6 +8,12 @@ from typing import Optional, Tuple, Dict, Any
 import httpx
 import ssl
 
+import os
+from app.database import AsyncSessionLocal
+from app.bot_messages import get_message  # Наш рабочий модуль локализации
+
+from fastapi import BackgroundTasks, HTTPException
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -663,11 +669,22 @@ class ProvisioningManager:
         exists = await self.provisioner.check_user_exists(str(uuid))
 
         if exists:
-            # Пользователь уже есть в Hiddify — это продление
-            await self.provisioner.enable_user(str(uuid))
-            await self._activate_subscription(sub_id)
-            logger.info(f"✅ Подписка {sub_id} активирована/продлена (уже существовала в Hiddify)")
-            return True
+            # Пользователь уже есть в Hiddify — это продление или смена тарифа
+            # Вызываем умное обновление лимитов со сбросом счетчиков трафика и даты старта пакета!
+            update_success = await self.provisioner.update_user_limits(
+                uuid=str(uuid),
+                tariff_slug=tariff,
+                reset_usage=True
+            )
+
+            if update_success:
+                await self._activate_subscription(sub_id)
+                logger.info(f"✅ Подписка {sub_id} успешно продлена в Hiddify со сбросом лимитов")
+                return True
+            else:
+                logger.error(f"❌ Не удалось обновить лимиты при продлении подписки {sub_id}")
+                await self._update_provisioning_attempt(sub_id, "Hiddify limits update failed on renewal")
+                return False
 
         # 5. Создаем пользователя в Hiddify (первая покупка)
         if email and not email.endswith("@ulysses.internal"):
@@ -810,3 +827,270 @@ class ProvisioningManager:
 
         logger.info(f"✅ Обработано {processed} из {len(pending_subs)} подписок")
         return processed
+
+# Вставьте этот код в самый конец файла ulysses-backend/app/provisioning_service.py
+
+async def provision_and_notify(subscription_id: int, to_email: str, hiddify_uuid: str):
+    """
+    Фоновая задача: активация VPN в Hiddify, отправка email или сообщения в Telegram
+    """
+    logger.info(f"🔄 Начало provision_and_notify для подписки {subscription_id}")
+
+    async with AsyncSessionLocal() as db:
+        try:
+            manager = ProvisioningManager(db)
+            success = await manager.provision_subscription(subscription_id)
+
+            if not success:
+                logger.warning(f"⚠️ Подписка {subscription_id} не активирована в Hiddify")
+                return
+
+            # ============================================================
+            # ПРОВЕРКА: Если email внутренний (@ulysses.internal) → Telegram
+            # ============================================================
+            if to_email.endswith("@ulysses.internal"):
+                logger.info("🤖 Обнаружен пользователь из Telegram-бота. Отправка email отменена.")
+
+                sub_result = await db.execute(text("""
+                    SELECT u.tg_user_id, s.tariff_slug, s.expires_at
+                    FROM subscriptions s
+                    JOIN users u ON s.user_id = u.id
+                    WHERE s.id = :sub_id LIMIT 1
+                """), {"sub_id": subscription_id})
+                sub_row = sub_result.fetchone()
+
+                if sub_row and sub_row[0]:
+                    tg_user_id = sub_row[0]
+                    tariff_slug = sub_row[1]
+                    expires_at = sub_row[2].strftime("%d.%m.%Y") if sub_row[2] else "N/A"
+
+                    # Подписочная ссылка на защищенный HFM (Сердце)
+                    sub_link = f"https://45.131.215{hiddify_uuid}/"
+
+                    if tariff_slug in ("sub_free", "tariff_free"):
+                        text_msg = (
+                            f"🎁 *Тестовый период успешно активирован!*\n\n"
+                            f"Ваш VPN-туннель готов к работе.\n"
+                            f"⏳ Доступ активен до: *{expires_at}*\n\n"
+                            f"🔗 Ссылка для подключения (нажмите для копирования):\n"
+                            f"`{sub_link}`\n\n"
+                            f"Инструкция: Скопируйте ссылку выше и вставьте её в приложение *Hiddify App* в поле 'Добавить профиль'."
+                        )
+                    else:
+                        text_msg = (
+                            f"🎉 *Оплата успешно получена!*\n\n"
+                            f"Ваша подписка обновлена.\n"
+                            f"⏳ Новый срок действия: *{expires_at}*\n\n"
+                            f"🔗 Ваша ссылка для подключения:\n"
+                            f"`{sub_link}`\n\n"
+                            f"_Если вы уже добавляли этот профиль в приложение, перенастраивать ничего не нужно — конфиги обновятся автоматически!_"
+                        )
+
+                    reply_markup = {
+                        "inline_keyboard": [
+                            [{"text": "📊 Проверить баланс", "callback_data": "action_check_balance"}],
+                            [{"text": "✉️ Добавить Email для уведомлений", "callback_data": "action_prompt_add_email"}]
+                        ]
+                    }
+
+                    bot_token = os.getenv("BOT_TOKEN")
+                    if bot_token:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                            payload = {
+                                "chat_id": tg_user_id,
+                                "text": text_msg,
+                                "parse_mode": "Markdown",
+                                "reply_markup": reply_markup
+                            }
+                            tg_res = await client.post(tg_url, json=payload)
+                            if tg_res.status_code == 200:
+                                logger.info(f"✅ Уведомление об активации успешно отправлено в Telegram для {tg_user_id}")
+                            else:
+                                logger.error(f"❌ Ошибка отправки в Telegram API: {tg_res.text}")
+                else:
+                    logger.error(f"❌ Не найден tg_user_id для подписки {subscription_id}")
+
+            else:
+                logger.info(f"📧 Пользователь с сайта. Отправляю email на {to_email}...")
+                # Если у вас есть хелпер отправки писем, раскомментируйте:
+                # from app.utils import send_welcome_email
+                # await send_welcome_email(to_email, hiddify_uuid)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в provision_and_notify: {e}", exc_info=True)
+
+
+# Вставьте этот блок кода в конец файла ulysses-backend/app/provisioning_service.py
+
+from fastapi import HTTPException
+from app.bot_messages import get_message  # Правильный импорт локализации
+from datetime import datetime, timedelta
+
+async def _action_show_about(tg_user_id, data, db, background_tasks) -> dict:
+    from app.bot_messages import MD_TEXTS # Импортируем тексты, если они лежат в бот-сообщениях
+    return {"state": "info", "message": MD_TEXTS.get("service", "О сервисе"), "keyboard": "back"}
+
+async def _action_show_rules(tg_user_id, data, db, background_tasks) -> dict:
+    from app.bot_messages import MD_TEXTS
+    return {"state": "info", "message": MD_TEXTS.get("rules", "Правила"), "keyboard": "back"}
+
+async def _action_show_support(tg_user_id, data, db, background_tasks) -> dict:
+    from app.bot_messages import MD_TEXTS
+    return {"state": "info", "message": MD_TEXTS.get("support", "Поддержка"), "keyboard": "back"}
+
+
+async def _action_check_balance(
+    tg_user_id: int,
+    data: dict,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks
+) -> dict:
+    """Проверка баланса пользователя из бота."""
+    try:
+        result = await db.execute(text("""
+            SELECT u.hiddify_uuid, u.email, s.expires_at, s.status, u.id, u.tg_user_id, u.tg_username
+            FROM users u
+            LEFT JOIN subscriptions s ON s.user_id = u.id
+            WHERE u.tg_user_id = :tg_id
+            ORDER BY s.expires_at DESC LIMIT 1
+        """), {"tg_id": tg_user_id})
+        row = result.fetchone()
+
+        if not row:
+            return {"state": "error", "message": get_message("error_unknown"), "keyboard": "back"}
+
+        uuid, email_db, db_expires_at, db_status, user_id, tg_id_db, tg_username_db = (
+            str(row[0]) if row[0] else None, row[1], row[2], row[3], row[4], row[5], row[6]
+        )
+
+        now = datetime.utcnow()
+        days_left = 0
+        if db_expires_at:
+            expires_naive = db_expires_at.replace(tzinfo=None) if db_expires_at.tzinfo else db_expires_at
+            days_left = max(0, (expires_naive - now).days)
+
+        is_active = (db_status in ["active", "provisioning"]) and days_left > 0
+        traffic_data = {"used_gb": 0.0, "total_gb": 0.0, "remaining_gb": 0.0, "percent": 0.0}
+
+        if uuid:
+            try:
+                async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                    response = await client.get(settings.HIDDIFY_API_URL, headers={"Hiddify-API-Key": settings.HIDDIFY_API_KEY})
+                    if response.status_code == 200:
+                        for u in response.json():
+                            if str(u.get("uuid", "")).lower() == uuid.lower():
+                                usage = float(u.get("current_usage_GB", 0))
+                                total = float(u.get("usage_limit_GB", 0))
+                                traffic_data = {
+                                    "used_gb": round(usage, 2), "total_gb": round(total, 2),
+                                    "remaining_gb": round(max(0.0, total - usage), 2), "percent": round((usage / total * 100) if total > 0 else 0, 1)
+                                }
+                                is_active = bool(u.get("enable", True)) and days_left > 0
+                                break
+            except Exception as e:
+                logger.error(f"❌ Ошибка Hiddify в bot/action: {e}")
+
+        return {
+            "state": "balance", "message": "balance_data", "keyboard": "back",
+            "balance": {
+                "status": "active" if is_active else "disabled", "email": email_db if email_db else "Бот (Без почты)",
+                "uuid": uuid, "traffic": traffic_data, "days_left": days_left, "is_active": is_active
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ check_balance error: {e}")
+        return {"state": "error", "message": get_message("error_unknown"), "keyboard": "back"}
+
+
+async def _action_buy_tariff(
+    tg_user_id: int,
+    data: dict,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks
+) -> dict:
+    """Покупка/активация тарифа из бота."""
+    import json
+    from pathlib import Path
+    import uuid as uuid_lib
+
+    tariff_slug = data.get("tariff_slug")
+    tg_username = data.get("tg_username", "unknown")
+
+    if not tariff_slug:
+        raise HTTPException(status_code=400, detail="tariff_slug required")
+
+    tariffs_path = Path(__file__).parent / "tariffs.json"
+    try:
+        with open(tariffs_path, "r", encoding="utf-8") as f:
+            tariffs = json.load(f)
+    except Exception as e:
+        logger.error(f"❌ Ошибка чтения tariffs.json: {e}")
+        raise HTTPException(status_code=500, detail="Tariff configuration error")
+
+    if tariff_slug not in tariffs:
+        raise HTTPException(status_code=400, detail="Unknown tariff slug")
+
+    tariff_info = tariffs[tariff_slug]
+    amount = float(tariff_info["price"])
+    days_to_add = int(tariff_info["days"])
+
+    logger.info(f"💰 Тариф: {tariff_slug} | Цена: {amount} | Срок: {days_to_add} дн.")
+
+    result = await db.execute(text("""
+        SELECT id, hiddify_uuid, email FROM users WHERE tg_user_id = :tg_id LIMIT 1
+    """), {"tg_id": tg_user_id})
+    user_row = result.fetchone()
+
+    if user_row:
+        user_id, hiddify_uuid, email_db = user_row
+        if not hiddify_uuid:
+            hiddify_uuid = uuid_lib.uuid4()
+            await db.execute(text("UPDATE users SET hiddify_uuid = :uuid WHERE id = :id"), {"uuid": hiddify_uuid, "id": user_id})
+        logger.info(f"👤 Существующий пользователь ID={user_id}")
+    else:
+        hiddify_uuid = uuid_lib.uuid4()
+        insert_result = await db.execute(text("""
+            INSERT INTO users (tg_user_id, tg_username, email, hiddify_uuid, created_at, updated_at)
+            VALUES (:tg_id, :tg_username, NULL, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
+        """), {"tg_id": tg_user_id, "tg_username": tg_username, "uuid": hiddify_uuid})
+        user_id = insert_result.fetchone()[0]
+        logger.info(f"✨ Новый пользователь ID={user_id}, UUID={hiddify_uuid}")
+
+    bot_email_alias = f"tg_bot_{tg_user_id}@ulysses.internal"
+    initial_status = "success" if amount == 0.00 else "pending"
+    provider_tx = "tx_free_auto" if amount == 0.00 else None
+    order_id = uuid_lib.uuid4()
+
+    await db.execute(text("""
+        INSERT INTO payment_attempts (id, email, user_id, tariff_slug, amount, currency, status, provider_tx_id, created_at, updated_at)
+        VALUES (:id, :email, :user_id, :tariff_slug, :amount, 'RUB', :status, :tx_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """), {"id": order_id, "email": bot_email_alias, "user_id": user_id, "tariff_slug": tariff_slug, "amount": amount, "status": initial_status, "tx_id": provider_tx})
+
+    if amount == 0.00:
+        free_check = await db.execute(text("SELECT COUNT(*) FROM subscriptions WHERE user_id = :user_id AND tariff_slug = :slug"), {"user_id": user_id, "slug": tariff_slug})
+        if free_check.scalar_one() > 0:
+            return {"state": "error", "message": "⚠️ *Бесплатный период уже использован!*\n\nВы уже активировали тестовый доступ.", "keyboard": "tariffs"}
+
+        sub_check = await db.execute(text("SELECT expires_at FROM subscriptions WHERE user_id = :user_id ORDER BY expires_at DESC LIMIT 1"), {"user_id": user_id})
+        last_sub_row = sub_check.fetchone()
+
+        now = datetime.utcnow()
+        starts_at = now
+        if last_sub_row and last_sub_row[0]:
+            last_expires_naive = last_sub_row[0].replace(tzinfo=None) if last_sub_row[0].tzinfo else last_sub_row[0]
+            if last_expires_naive > now: starts_at = last_expires_naive
+
+        expires_at = starts_at + timedelta(days=days_to_add)
+        sub_result = await db.execute(text("""
+            INSERT INTO subscriptions (user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at)
+            VALUES (:user_id, :tariff_slug, 'provisioning', 'main', :starts_at, :expires_at, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
+        """), {"user_id": user_id, "tariff_slug": tariff_slug, "starts_at": starts_at, "expires_at": expires_at})
+        subscription_id = sub_result.fetchone()[0]
+        await db.commit()
+
+        background_tasks.add_task(provision_and_notify, subscription_id=subscription_id, to_email=bot_email_alias, hiddify_uuid=str(hiddify_uuid))
+        return {"state": "payment_free", "message": get_message("payment_free_activated"), "keyboard": "back"}
+
+    await db.commit()
+    return {"state": "payment_pending", "message": get_message("payment_pending", order_id=str(order_id), amount=amount), "keyboard": "back", "order_id": str(order_id)}
