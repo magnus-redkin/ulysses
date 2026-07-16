@@ -14,11 +14,7 @@ import logging
 from app.database import get_db
 from app.config import settings
 from app.models import User, Subscription, PaymentAttempt  # Ваши ORM модели
-
-
-from app.services.provisioning_manager import ProvisioningManager
-from app.tasks.workers import provision_and_notify
-
+from app.provisioning_service import ProvisioningManager, provision_and_notify
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +271,8 @@ async def get_subscription_status(hiddify_uuid: str, db: AsyncSession = Depends(
 
     return subscription.to_dict()
 
+
+### changed_no_disk
 
 @router.post("/retry-provisioning/{subscription_id}")
 async def retry_provisioning(subscription_id: int, db: AsyncSession = Depends(get_db)):

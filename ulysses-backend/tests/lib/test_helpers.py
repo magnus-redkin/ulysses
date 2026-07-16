@@ -62,6 +62,22 @@ async def get_user_balance(identifier, by: str = "tg_id"):
                  {"email": identifier} if by == "email" else \
                  {"hiddify_uuid": identifier}
         resp = await client.get(f"{BASE_URL}/api/user/balance", params=params)
+
+        # 1. Если бэкенд выдал 404, проверяем тело ответа
+        if resp.status_code == 404:
+            # Если бэкенд честно говорит, что не нашел подписку/юзера по этому ТГ-фильтру
+            # Для шага отвязки это означает успех (ТГ-привязки больше нет!)
+            try:
+                detail = resp.json().get("detail", "")
+                if "not found" in detail.lower():
+                    return None
+            except Exception:
+                pass
+
+        if resp.status_code != 200:
+            print(f"\n❌ [ОШИБКА ХЕЛПЕРА] Бэкенд вернул HTTP {resp.status_code} вместо JSON! Ответ: {resp.text}")
+            return {"state": "error", "message": resp.text}
+
         if resp.status_code == 200:
             return resp.json()
         return None

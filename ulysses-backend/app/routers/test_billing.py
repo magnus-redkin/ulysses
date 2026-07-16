@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import logging
 
 from app.database import get_db
-from app.provisioning_service import provision_and_notify
+from app.tasks.workers import provision_and_notify
 
 logger = logging.getLogger(__name__)
 

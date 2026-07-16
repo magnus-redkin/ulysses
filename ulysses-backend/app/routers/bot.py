@@ -89,14 +89,15 @@ async def bot_action(
     if not tg_user_id or not action:
         raise HTTPException(status_code=400, detail="tg_user_id and action required")
 
-    # Импортируем хэндлеры из provisioning_service или где они у вас лежат
-    from app.provisioning_service import (
+    #
+    from app.services.provisioning_manager import (
         _action_buy_tariff,
         _action_check_balance,
         _action_show_about,
         _action_show_rules,
         _action_show_support
     )
+
 
     actions = {
         "buy_tariff": _action_buy_tariff,

@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.config import settings
 from app.models import User, Subscription, PaymentAttempt
-from app.provisioning_service import ProvisioningManager, HiddifyProvisioner
+
+from app.services.provisioning_manager import ProvisioningManager
+from app.services.hiddify_client import HiddifyProvisioner
+
 from app.system_info import collect_system_metrics
 
 logger = logging.getLogger(__name__)
