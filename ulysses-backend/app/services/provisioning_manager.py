@@ -8,7 +8,7 @@ import logging
 import httpx
 import uuid as uuid_lib
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy import text
@@ -95,15 +95,30 @@ class ProvisioningManager:
 
 # Замените эти три функции в Части 2 на следующий рабочий вариант:
 
+# Внутри ulysses-backend/app/services/provisioning_manager.py
+
 async def _action_show_about(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
-    # Используем штатную функцию локализации вместо словаря
-    return {"state": "info", "message": get_message("about", default="ℹ️ Информация о сервисе Ulysses VPN"), "keyboard": "back"}
+    text_about = get_message(
+        "about",
+        default="ℹ️ <b>О сервисе Ulysses VPN</b>\n\nМы используем передовой протокол VLESS и распределенную сеть серверов-щитов для защиты вашего трафика."
+    )
+    return {"state": "info", "message": text_about, "keyboard": "back"}
+
 
 async def _action_show_rules(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
-    return {"state": "info", "message": get_message("rules", default="📜 Правила использования сервиса"), "keyboard": "back"}
+    text_rules = get_message(
+        "rules",
+        default="📜 <b>Официальные документы Ulysses VPN</b>\n\n• Пользовательское соглашение\n• Политика конфиденциальности\n• Правила триал-доступа."
+    )
+    return {"state": "info", "message": text_rules, "keyboard": "back"}
+
 
 async def _action_show_support(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
-    return {"state": "info", "message": get_message("support", default="✉️ Поддержка пользователей"), "keyboard": "back"}
+    text_support = get_message(
+        "support",
+        default="✉️ <b>Техническая поддержка</b>\n\nЕсли у вас возникли вопросы по настройке туннеля, напишите саппорту: @ulysses_support_bot"
+    )
+    return {"state": "info", "message": text_support, "keyboard": "back"}
 
 async def _action_check_balance(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
     """Проверка баланса пользователя из бота с запросом метрик из Hiddify."""
@@ -156,77 +171,169 @@ async def _action_check_balance(tg_user_id: int, data: dict, db: AsyncSession, b
 # ЧАСТЬ 3: АКТИВАЦИЯ И ПОКУПКА ТАРИФОВ
 # ============================================================
 
+# Внутри ulysses-backend/app/services/provisioning_manager.py
+
 async def _action_buy_tariff(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
-    """Покупка/активация тарифа из бота."""
-    tariff_slug = data.get("tariff_slug")
-    tg_username = data.get("tg_username", "unknown")
+    """
+    Универсальный обработчик экшена покупки и активации тарифов.
+    Разделяет вызов тарифной сетки и непосредственную транзакцию активации услуг.
+    Бронебойно извлекает параметры из JSON-пакета любой вложенности.
+    """
+    if not isinstance(data, dict):
+        data = {}
 
+    payload = data.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    # 🔍 МНОГОУРОВНЕВЫЙ СБОР ПАРАМЕТРОВ: ищем слаг тарифа во всех возможных секциях JSON
+    tariff_slug = data.get("tariff_slug") or payload.get("tariff_slug") or data.get("action")
+
+    # Если в качестве слага по ошибке прилетело общее имя экшена, сбрасываем его
+    if tariff_slug == "buy_tariff":
+        tariff_slug = None
+
+    # Если слаг прилетел в коротком формате кнопки бота (t_free, t_1m), восстанавливаем в sub_free/sub_1m
+    if tariff_slug and tariff_slug.startswith("t_"):
+        short_name = tariff_slug.replace("t_", "")
+        tariff_slug = short_name if short_name.startswith("sub_") else f"sub_{short_name}"
+
+    tg_username = payload.get("tg_username") or data.get("tg_username") or "unknown"
+
+    # 🌟 ШАГ 1: Если после всех проверок слага нет — это 100% первичный вызов меню.
+    # Вместо ошибки 400 Bad Request возвращаем команду переключения на экран тарифов.
     if not tariff_slug:
-        raise HTTPException(status_code=400, detail="tariff_slug required")
+        logger.info(f"🛒 Пользователь TG {tg_user_id} открыл интерактивное меню тарифов")
+        return {
+            "state": "tariffs",
+            "message": "🛒 Выберите подходящий тарифный план для старта Ulysses VPN:",
+            "keyboard": "tariffs"
+        }
 
-    tariffs_path = Path(__file__).parent.parent / "tariffs.json"
-    with open(tariffs_path, "r", encoding="utf-8") as f:
-        tariffs = json.load(f)
+    logger.info(f"💰 [БЭКЕНД] Запуск транзакции активации тарифа '{tariff_slug}' для TG {tg_user_id} (@{tg_username})")
 
-    if tariff_slug not in tariffs:
-        raise HTTPException(status_code=400, detail="Unknown tariff slug")
+    # 🌟 ШАГ 2: Извлекаем локальный ID пользователя по его Telegram ID
+    user_res = await db.execute(
+        text("SELECT id, hiddify_uuid FROM users WHERE tg_user_id = :tg_id"),
+        {"tg_id": tg_user_id}
+    )
+    user_row = user_res.fetchone()
+    if not user_row:
+        logger.error(f"❌ Сбой активации: Пользователь TG {tg_user_id} не найден в СУБД!")
+        return {
+            "state": "error",
+            "message": "⚠️ <b>Профиль не найден.</b>\n\nОтправьте команду /start для повторной инициализации аккаунта.",
+            "keyboard": "back"
+        }
 
-    tariff_info = tariffs[tariff_slug]
-    amount = float(tariff_info["price"])
-    days_to_add = int(tariff_info["days"])
+    user_internal_id, hiddify_uuid_str = user_row
 
-    result = await db.execute(text("SELECT id, hiddify_uuid FROM users WHERE tg_user_id = :tg_id LIMIT 1"), {"tg_id": tg_user_id})
-    user_row = result.fetchone()
+    # 🌟 ШАГ 3: Если пользователь запрашивает бесплатный триал ('sub_free'),
+    # проверяем историю подписок, чтобы исключить повторную халяву.
+    if tariff_slug == "sub_free":
+        check_history_sql = """
+            SELECT id FROM subscriptions
+            WHERE user_id = :uid AND tariff_slug = 'sub_free' AND status != 'cancelled'
+            LIMIT 1
+        """
+        history_res = await db.execute(text(check_history_sql), {"uid": user_internal_id})
+        if history_res.fetchone():
+            logger.warning(f"🚫 Блокировка: Пользователь TG {tg_user_id} пытается повторно получить тариф Free!")
+            return {
+                "state": "error",
+                "message": "⚠️ <b>Бесплатный период уже был активирован ранее!</b>\n\nПовторная выдача тестового тарифа заблокирована системой биллинга. Пожалуйста, выберите платный тарифный план.",
+                "keyboard": "back"
+            }
 
-    if user_row:
-        user_id, hiddify_uuid = user_row[0], user_row[1]
-        if not hiddify_uuid:
-            hiddify_uuid = uuid_lib.uuid4()
-            await db.execute(text("UPDATE users SET hiddify_uuid = :uuid WHERE id = :id"), {"uuid": hiddify_uuid, "id": user_id})
-    else:
-        hiddify_uuid = uuid_lib.uuid4()
-        insert_result = await db.execute(text("""
-            INSERT INTO users (tg_user_id, tg_username, email, hiddify_uuid, created_at, updated_at)
-            VALUES (:tg_id, :tg_username, NULL, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-        """), {"tg_id": tg_user_id, "tg_username": tg_username, "uuid": hiddify_uuid})
-        user_id = insert_result.fetchone()[0]
+    # 🌟 ШАГ 4: Формируем сроки подписки (для триала даем 3 дня, для коммерческих — 30 дней)
+    now = datetime.now(timezone.utc)
+    days_to_add = 3 if tariff_slug == "sub_free" else 30
+    expires_at = now + timedelta(days=days_to_add)
 
-    bot_email_alias = f"tg_bot_{tg_user_id}@ulysses.internal"
-    initial_status = "success" if amount == 0.00 else "pending"
-    provider_tx = "tx_free_auto" if amount == 0.00 else None
-    order_id = uuid_lib.uuid4()
-
-    await db.execute(text("""
-        INSERT INTO payment_attempts (id, email, user_id, tariff_slug, amount, currency, status, provider_tx_id, created_at, updated_at)
-        VALUES (:id, :email, :user_id, :tariff_slug, :amount, 'RUB', :status, :tx_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    """), {"id": order_id, "email": bot_email_alias, "user_id": user_id, "tariff_slug": tariff_slug, "amount": amount, "status": initial_status, "tx_id": provider_tx})
-
-    if amount == 0.00:
-        free_check = await db.execute(text("SELECT COUNT(*) FROM subscriptions WHERE user_id = :user_id AND tariff_slug = :slug"), {"user_id": user_id, "slug": tariff_slug})
-        if free_check.scalar_one() > 0:
-            return {"state": "error", "message": "⚠️ *Бесплатный период уже использован!*\n\nВы уже активировали тестовый доступ.", "keyboard": "tariffs"}
-
-        sub_check = await db.execute(text("SELECT expires_at FROM subscriptions WHERE user_id = :user_id ORDER BY expires_at DESC LIMIT 1"), {"user_id": user_id})
-        last_sub_row = sub_check.fetchone()
-
-        now = datetime.utcnow()
-        starts_at = now
-        if last_sub_row and last_sub_row[0]:
-            last_expires_naive = last_sub_row[0].replace(tzinfo=None) if last_sub_row[0].tzinfo else last_sub_row[0]
-            if last_expires_naive > now:
-                starts_at = last_expires_naive
-
-        expires_at = starts_at + timedelta(days=days_to_add)
-        sub_result = await db.execute(text("""
-            INSERT INTO subscriptions (user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at)
-            VALUES (:user_id, :tariff_slug, 'provisioning', 'main', :starts_at, :expires_at, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-        """), {"user_id": user_id, "tariff_slug": tariff_slug, "starts_at": starts_at, "expires_at": expires_at})
-        subscription_id = sub_result.fetchone()[0]
+    # 🌟 ШАГ 5: Фиксируем подписку в базе данных со стартовым статусом 'provisioning'
+    sql_insert_sub = """
+        INSERT INTO subscriptions (
+            user_id, tariff_slug, status, node_id, starts_at, expires_at,
+            created_at, updated_at, provisioning_attempts, provisioning_error
+        )
+        VALUES (
+            :uid, :tariff, 'provisioning', 'main', :starts, :expires,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL
+        )
+        RETURNING id
+    """
+    try:
+        sub_res = await db.execute(text(sql_insert_sub), {
+            "uid": user_internal_id,
+            "tariff": tariff_slug,
+            "starts": now,
+            "expires": expires_at
+        })
+        new_subscription_id = sub_res.scalar_one()
         await db.commit()
+        logger.info(f"💾 Подписка #{new_subscription_id} успешно создана в PostgreSQL. Запуск конвейера провижна...")
+    except Exception as db_err:
+        await db.rollback()
+        logger.error(f"❌ Ошибка записи подписки в PostgreSQL: {db_err}")
+        return {
+            "state": "error",
+            "message": "⚠️ <b>Ошибка СУБД при оформлении подписки.</b>\n\nПожалуйста, попробуйте позже.",
+            "keyboard": "back"
+        }
 
-        from app.tasks.workers import provision_and_notify
-        background_tasks.add_task(provision_and_notify, subscription_id=subscription_id, to_email=bot_email_alias, hiddify_uuid=str(hiddify_uuid))
-        return {"state": "payment_free", "message": get_message("payment_free_activated"), "keyboard": "back"}
+    # 🌟 ШАГ 6: Передаем тяжелую задачу связи с нодой Hiddify v2 и отправки ссылки
+    # в изолированный асинхронный воркер, полностью защищая UI бота от фризов.
+    from app.tasks.workers import provision_and_notify
+    background_tasks.add_task(
+        provision_and_notify,
+        subscription_id=new_subscription_id,
+        tg_user_id=tg_user_id,
+        hiddify_uuid=str(hiddify_uuid_str),
+        expires_at=expires_at
+    )
 
-    await db.commit()
-    return {"state": "payment_pending", "message": get_message("payment_pending", order_id=str(order_id), amount=amount), "keyboard": "back", "order_id": str(order_id)}
+    # Возвращаем мгновенный промежуточный ответ, переключая интерфейс в режим ожидания
+    return {
+        "state": "info",
+        "message": (
+            "🎁 <b>Запрос успешно принят в обработку!</b>\n\n"
+            "⚙️ Наш кластер настраивает ваш персональный защищённый туннель на ноде...\n\n"
+            "<i>Пожалуйста, подождите несколько секунд. Конфигурационная карточка со ссылкой подключения автоматически прилетит в этот чат!</i>"
+        ),
+        "keyboard": "back"
+    }
+
+# Добавьте в ulysses-backend/app/services/provisioning_manager.py:
+
+async def _action_start_registration(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
+    """🌟 МЯГКАЯ РЕГИСТРАЦИЯ: Гарантирует наличие пользователя в БД при вызове /start."""
+    payload = data.get("payload", {}) or {}
+    tg_username = payload.get("tg_username", "unknown")
+
+    # Проверяем, существует ли пользователь в PostgreSQL
+    res = await db.execute(text("SELECT id FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_user_id})
+    if not res.fetchone():
+        import uuid as uuid_lib
+        new_uuid = uuid_lib.uuid4()
+
+        # Создаем чистую запись с UUID под новый тест с нуля
+        sql_insert = """
+            INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, created_at, updated_at)
+            VALUES (:tg_id, :username, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+        await db.execute(text(sql_insert), {"tg_id": tg_user_id, "username": tg_username, "uuid": new_uuid})
+        await db.commit()
+        logger.info(f"👤 [МЯГКАЯ РЕГИСТРАЦИЯ] Пользователь {tg_user_id} (@{tg_username}) успешно занесен в PostgreSQL")
+
+    return {"state": "main_menu", "message": "OK", "keyboard": "active"}
+
+
+# Не забудьте зарегистрировать имя функции в глобальном словаре действий actions в этом же файле:
+actions = {
+    "start": _action_start_registration,  # 🌟 РЕГИСТРИРУЕМ НАШ ЭКШЕН СТАРТА
+    "buy_tariff": _action_buy_tariff,
+    "check_balance": _action_check_balance,
+    "show_about": _action_show_about,
+    "show_rules": _action_show_rules,
+    "show_support": _action_show_support,
+}

@@ -32,9 +32,8 @@ class Settings(BaseSettings):
 
     # Hiddify API
     # Извлекаем базовый URL из .env и гарантируем, что он превратится в полный путь к API пользователей
-    _raw_url = os.getenv("HIDDIFY_API_URL", "").strip("/")
-    HIDDIFY_API_URL: str = f"https://{_raw_url.replace('https://', '')}/api/v1/user/" if _raw_url else ""
-    HIDDIFY_API_KEY: str = os.getenv("HIDDIFY_API_KEY", "")
+    HIDDIFY_API_URL: str = os.getenv("HIDDIFY_API_URL", "").strip()
+    HIDDIFY_API_KEY: str = os.getenv("HIDDIFY_API_KEY", "").strip()
 
     # SMTP
     SMTP_HOST: str = os.getenv("SMTP_HOST", "127.0.0.1")

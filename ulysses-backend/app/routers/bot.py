@@ -1,5 +1,9 @@
 # ulysses-backend/app/routers/bot.py
 
+import uuid as uuid_lib
+from pydantic import BaseModel
+from app.database import get_db
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -14,6 +18,12 @@ from app.bot_messages import get_message
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bot", tags=["bot"])
+
+# Создаем легкую изолированную схему без лишних полей
+class BotRegisterSchema(BaseModel):
+    tg_user_id: int
+    tg_username: str
+
 
 @router.get("/state")
 async def get_bot_state(
@@ -112,3 +122,22 @@ async def bot_action(
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
     return await handler(tg_user_id, data, db, background_tasks)
+
+@router.post("/register")
+async def bot_register_user(payload: BotRegisterSchema, db: AsyncSession = Depends(get_db)):
+    """🌟 МЯГКАЯ РЕГИСТРАЦИЯ: Гарантирует наличие пользователя в БД без ошибок 400."""
+    logger.info(f"👤 [API РЕГИСТРАЦИЯ] Получен запрос от бота для TG ID {payload.tg_user_id}")
+
+    res = await db.execute(text("SELECT id FROM users WHERE tg_user_id = :tg_id"), {"tg_id": payload.tg_user_id})
+    if not res.fetchone():
+        new_uuid = uuid_lib.uuid4()
+        sql_insert = """
+            INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, created_at, updated_at)
+            VALUES (:tg_id, :username, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+        await db.execute(text(sql_insert), {"tg_id": payload.tg_user_id, "username": payload.tg_username, "uuid": new_uuid})
+        await db.commit()
+        logger.info(f"👤 [API РЕГИСТРАЦИЯ] Пользователь {payload.tg_user_id} занесен в PostgreSQL.")
+        return {"status": "registered", "created": True}
+
+    return {"status": "exists", "created": False}

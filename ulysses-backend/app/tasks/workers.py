@@ -1,6 +1,11 @@
 # ulysses-backend/app/tasks/workers.py
 
-import os
+# АСИНХРОННЫЕ ФОНОВЫЕ ВОРКЕРЫ И ОЧЕРЕДЬ ВЫДАЧИ ДОСТУПА VPN WORKERS
+# Модуль инкапсулирует тяжелые фоновые задачи (BackgroundTasks) FastAPI.
+# Обеспечивает каскадный провижн: сначала гарантированно создает профиль
+# на удаленной ноде Hiddify через API, фиксирует статус в PostgreSQL,
+# и только затем отправляет карточку конфигурации в Telegram-чат пользователя.
+
 import logging
 import httpx
 from datetime import datetime
@@ -8,100 +13,135 @@ from sqlalchemy import text
 
 from app.database import AsyncSessionLocal
 from app.config import settings
-from app.bot_messages import get_message  # Локализация сообщений бота
-from app.services.provisioning_manager import ProvisioningManager
+from app.services.hiddify_client import HiddifyProvisioner
+from app.bot_messages import get_message
 
 logger = logging.getLogger(__name__)
 
-async def provision_and_notify(subscription_id: int, to_email: str, hiddify_uuid: str):
-    """
-    Изолированная фоновая задача: активация VPN в панели ноды через ProvisioningManager,
-    генерация подписочной ссылки и отправка финального уведомления в Telegram API.
-    """
-    logger.info(f"🔄 [ВОРКЕР] Запуск фоновой задачи для подписки #{subscription_id}")
 
-    async with AsyncSessionLocal() as db:
+async def provision_and_notify(subscription_id: int, tg_user_id: int, hiddify_uuid: str, expires_at: datetime):
+    """
+    Фоновый воркер жизненного цикла выдачи услуг.
+    Реализует отказоустойчивый конвейер: Провижн в Hiddify -> Фиксация в БД -> Уведомление в TG.
+    """
+    logger.info(f"🚀 [ВОРКЕР] Начата фоновая обработка подписки #{subscription_id} для TG ID {tg_user_id}")
+
+    expires_str = expires_at.strftime("%Y-%m-%d %H:%M") if expires_at else "Не ограничено"
+    bot_token = getattr(settings, "BOT_TOKEN", None)
+
+    # Считываем базовый домен ноды для красивой сборки карточки ссылки
+    domain = getattr(settings, "HIDDIFY_DOMAIN", None)
+    if not domain and hasattr(settings, "HIDDIFY_API_URL"):
+        url_parts = settings.HIDDIFY_API_URL.split("/")
+        if len(url_parts) > 2:
+            domain = url_parts[2]
+    domain = domain or "193.188.22.128"
+
+    # Ссылка для импорта в Sing-box/V2ray клиент
+    sub_link = f"https://{domain}/X6CbExbUw2/sub/{hiddify_uuid}/"
+
+    # ============================================================
+    # ШАГ А: ФИЗИЧЕСКОЕ СОЗДАНИЕ КЛЮЧА В HIDDIFY MANAGER (API НОДЫ V2)
+    # ============================================================
+    hiddify_success = False
+    node_error_msg = None
+
+    try:
+        logger.info(f"📡 [ВОРКЕР] Отправка API запроса на создание профиля UUID {hiddify_uuid} в HFM v2...")
+        hiddify_client = HiddifyProvisioner()
+        response_status = await hiddify_client.create_user(
+            uuid=hiddify_uuid,
+            name=f"tg_{tg_user_id}"
+        )
+
+        if response_status:
+            hiddify_success = True
+            logger.info(f"✅ [ВОРКЕР] Профиль UUID {hiddify_uuid} успешно активирован в панели HFM v2.")
+        else:
+            node_error_msg = "Панель Hiddify v2 вернула статус ошибки при создании"
+            logger.error(f"⚠️ [ВОРКЕР] Нода отклонила создание профиля.")
+
+    except Exception as hf_err:
+        node_error_msg = str(hf_err)
+        logger.error(f"💥 [ВОРКЕР] Критический сетевой сбой API Hiddify v2: {hf_err}")
+
+    # ============================================================
+    # ШАГ Б: ФИКСАЦИЯ СТАТУСОВ ТРАНЗАКЦИИ В POSTGRESQL
+    # ============================================================
+    async with AsyncSessionLocal() as session:
         try:
-            # 1. Активируем подписку в базе и на ноде через наш менеджер
-            manager = ProvisioningManager(db)
-            success = await manager.provision_subscription(subscription_id)
-
-            if not success:
-                logger.warning(f"❌ [ВОРКЕР] Фоновая активация для подписки #{subscription_id} завершилась неудачей")
-                return
-
-            # 2. Проверяем источник пользователя (Бот или Сайт)
-            if to_email.endswith("@ulysses.internal"):
-                logger.info("🤖 [ВОРКЕР] Обнаружен клиент из Telegram-бота. Отправка email отменена.")
-
-                # Получаем данные пользователя для формирования сообщения
-                sub_result = await db.execute(text("""
-                    SELECT u.tg_user_id, s.tariff_slug, s.expires_at
-                    FROM subscriptions s
-                    JOIN users u ON s.user_id = u.id
-                    WHERE s.id = :sub_id LIMIT 1
-                """), {"sub_id": subscription_id})
-                sub_row = sub_result.fetchone()
-
-                if sub_row:
-                    tg_user_id, tariff_slug, expires_at = sub_row
-                    expires_str = expires_at.strftime("%d.%m.%Y") if expires_at else "N/A"
-
-                    # Формируем защищенную ссылку подключения к Сердцу (HFM)
-                    sub_link = f"https://45.131.215{hiddify_uuid}/"
-
-                    # Сборка текста ответа в зависимости от типа тарифа
-                    if tariff_slug in ("sub_free", "tariff_free"):
-                        text_msg = (
-                            f"🎁 <b>Тестовый период успешно активирован!</b>\n\n"
-                            f"Ваш VPN-туннель готов к работе.\n"
-                            f"⏳ Доступ активен до: <b>{expires_str}</b>\n\n"
-                            f"🔗 Ссылка для подключения (нажмите для копирования):\n"
-                            f"<code>{sub_link}</code>\n\n"
-                            f"Инструкция: Скопируйте ссылку выше и вставьте её в приложение <b>Hiddify App</b> в поле 'Добавить профиль'."
-                        )
-                    else:
-                        text_msg = (
-                            f"🎉 <b>Оплата успешно получена!</b>\n\n"
-                            f"Ваша подписка обновлена.\n"
-                            f"⏳ Новый срок действия: <b>{expires_str}</b>\n\n"
-                            f"🔗 Ваша ссылка для подключения:\n"
-                            f"<code>{sub_link}</code>\n\n"
-                            f"<i>Если вы уже добавляли этот профиль в приложение, перенастраивать ничего не нужно — конфиги обновятся автоматически!</i>"
-                        )
-
-                    # Формируем Inline-клавиатуру
-                    reply_markup = {
-                        "inline_keyboard": [
-                            [{"text": "📊 Проверить баланс", "callback_data": "action_check_balance"}],
-                            [{"text": "✉️ Добавить Email для уведомлений", "callback_data": "action_prompt_add_email"}]
-                        ]
-                    }
-
-                    # Отправляем сообщение напрямую в Telegram API через чистый HTML
-                    bot_token = os.getenv("BOT_TOKEN")
-                    if bot_token:
-                        async with httpx.AsyncClient(timeout=10.0) as client:
-                            # 🌟 Исправленный URL: Path-сегмент слит, слэши расставлены корректно
-                            tg_url = f"https://api.telegram.org/{bot_token}/sendMessage"
-                            payload = {
-                                "chat_id": tg_user_id,
-                                "text": text_msg,
-                                "parse_mode": "HTML",
-                                "reply_markup": reply_markup
-                            }
-                            tg_res = await client.post(tg_url, json=payload)
-                            if tg_res.status_code == 200:
-                                logger.info(f"✅ [ВОРКЕР] Финальный конфиг доставлен пользователю {tg_user_id} в Telegram")
-                            else:
-                                logger.error(f"❌ [ВОРКЕР] Сбой отправки сообщения в Telegram API: {tg_res.text}")
-                else:
-                    logger.error(f"❌ [ВОРКЕР] Не удалось найти связку пользователя для подписки #{subscription_id}")
-
+            if hiddify_success:
+                sql_update = """
+                    UPDATE subscriptions
+                    SET status = 'active',
+                        activated_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP,
+                        provisioning_error = NULL
+                    WHERE id = :sub_id
+                """
+                await session.execute(text(sql_update), {"sub_id": subscription_id})
+                logger.info(f"💾 [ВОРКЕР] Статус подписки #{subscription_id} обновлен на ACTIVE в PostgreSQL")
             else:
-                # Сценарий покупки с веб-сайта
-                logger.info(f"📧 [ВОРКЕР] Пользователь пришел с сайта. Запуск отправки письма на {to_email}...")
-                # На следующих этапах сюда импортируется хелпер send_welcome_email(to_email, hiddify_uuid)
+                sql_fail = """
+                    UPDATE subscriptions
+                    SET status = 'provisioning',
+                        provisioning_attempts = provisioning_attempts + 1,
+                        provisioning_error = :err_msg,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :sub_id
+                """
+                await session.execute(text(sql_fail), {"sub_id": subscription_id, "err_msg": node_error_msg[:200]})
+                logger.warning(f"💾 [ВОРКЕР] Подписка #{subscription_id} зафиксирована в карантине (provisioning)")
 
-        except Exception as e:
-            logger.error(f"🚨 [ВОРКЕР] Критический сбой при выполнении фоновой задачи: {e}", exc_info=True)
+            await session.commit()
+        except Exception as db_err:
+            await session.rollback()
+            logger.error(f"❌ [ВОРКЕР] Ошибка фиксации стейта в БД: {db_err}")
+
+    # ============================================================
+    # ШАГ В: ОТПРАВКА УВЕДОМЛЕНИЯ СО ССЫЛКОЙ В TELEGRAM API
+    # ============================================================
+    if not bot_token:
+        logger.error("❌ [ВОРКЕР] Сбой отправки: Параметр settings.BOT_TOKEN не обнаружен!")
+        return
+
+    # Собираем чистый HTML шаблон карточки выдачи (Защита от KeyError и Markdown-конфликтов)
+    text_msg = (
+        f"🎉 <b>Подписка успешно активирована!</b>\n\n"
+        f"Ваш персональный VPN-туннель полностью готов к работе.\n"
+        f"⏳ Срок действия: до <b>{expires_str}</b>\n\n"
+        f"🔗 <b>Ваша ссылка для импорта (нажмите для копирования):</b>\n"
+        f"<code>{sub_link}</code>\n\n"
+        f"<i>Инструкция: Скопируйте ссылку выше, откройте приложение Hiddify App, нажмите 'Добавить профиль' и вставьте её туда.</i>"
+    )
+
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "📊 Проверить баланс", "callback_data": "check_balance"}]
+        ]
+    }
+
+    try:
+        # 🌟 БРОНЕБОЙНЫЙ ВАРИАНТ: Разделяем хост и путь с токеном, чтобы httpx не путал двоеточие с сетевым портом!
+        base_tg_host = "https://api.telegram.org"
+        target_path = f"/bot{bot_token}/sendMessage"
+
+        logger.info(f"📡 [ВОРКЕР] Отправка карточки в Telegram. Путь: {target_path[:25]}...")
+
+        payload = {
+            "chat_id": tg_user_id,
+            "text": text_msg,
+            "parse_mode": "HTML",
+            "reply_markup": reply_markup
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            tg_res = await client.post(f"{base_tg_host}{target_path}", json=payload)
+
+            if tg_res.status_code == 200:
+                logger.info(f"✅ [ВОРКЕР] Ссылка доступа успешно доставлена в чат пользователю {tg_user_id}")
+            else:
+                logger.error(f"❌ [ВОРКЕР] Сбой отправки сообщения в Telegram API: {tg_res.status_code} - {tg_res.text}")
+
+    except Exception as tg_err:
+        logger.error(f"❌ [ВОРКЕР] Критическая ошибка транспорта при отправке в Telegram: {tg_err}")

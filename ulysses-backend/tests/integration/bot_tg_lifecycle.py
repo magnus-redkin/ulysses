@@ -65,6 +65,14 @@ async def run_bot_lifecycle_test():
         assert res_support.status_code == 200 and res_support.json().get("state") == "info"
         print("   ✅ Экран 'Техническая поддержка' успешно отрендерен")
 
+        # Проверяем кнопку "Документы" (экшен show_rules)
+        res_rules = await client.post(f"{BASE_URL}/api/bot/action", json={
+            "tg_user_id": TEST_TG_ID, "action": "show_rules", "payload": {}
+        })
+        assert res_rules.status_code == 200 and res_rules.json().get("state") == "info"
+        print("   ✅ Экран 'Документы / Правила' успешно отрендерен бэкендом")
+
+
     # ------------------------------------------------------------
     # ШАГ 3: Запрос тарифа и активация бесплатного триала
     # ------------------------------------------------------------
@@ -113,16 +121,28 @@ async def run_bot_lifecycle_test():
     print("   ✅ База данных приведена в исходное состояние")
     return True
 
+# В самом конце файла ulysses-backend/tests/integration/bot_tg_lifecycle.py
+
 if __name__ == "__main__":
+    success = False
     try:
+        # Запускаем сквозную эмуляцию
         success = asyncio.run(run_bot_lifecycle_test())
     except AssertionError as e:
         print(f"\n❌ Критическая ошибка валидации логики: {e}")
-        success = False
     except Exception as e:
         print(f"\n❌ Непредвиденный сбой скрипта: {e}")
-        success = False
+    finally:
+        # 🌟 ГАРАНТИРОВАННЫЙ РУБЕЖ ЧИСТОТЫ: Выполнится даже при падении ассертов!
+        print(f"\n🧹 [ФИНАЛИЗАТОР ТЕСТА] Очистка операционной среды...")
+        try:
+            from lib.test_helpers import cleanup_user
+            # Вычищаем нашего жестко прописанного тест-юзера из базы
+            asyncio.run(cleanup_user(tg_id=777111222))
+            print("   ✅ Все интеграционные хвосты успешно удалены из PostgreSQL.")
+        except Exception as err:
+            print(f"   ❌ Не удалось запустить авто-клининг: {err}")
 
     print("\n" + "=" * 60)
-    print("✅ ИНТЕГРАЦИОННЫЙ ТЕСТ ЖИЗНЕННОГО ЦИКЛА УСПЕШНО ПРОЙДЕН!" if success else "❌ ИНТЕГРАЦИОННЫЙ ТЕСТ НЕ ПРОЙДЕН!")
+    print("✅ ИНТЕГРАЦИОННЫЙ ТЕСТ УСПЕШНО ВЫПОЛНЕН!" if success else "❌ ТЕСТ ПРОВАЛЕН!")
     print("=" * 60)

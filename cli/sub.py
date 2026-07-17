@@ -272,5 +272,39 @@ def sub_pending(user_id, tariff, error, attempts, create):
     asyncio.run(_pending_logic())
 
 
+@sub.command(name="revoke")
+@click.option("--user-id", type=int, required=True, help="ID пользователя из таблицы users")
+def sub_revoke(user_id):
+    """Принудительно отозвать (аннулировать) все active подписки пользователя.
+
+    Пример: uadmin sub revoke --user-id 153
+    """
+    async def _revoke():
+        async with AsyncSessionLocal() as session:
+            now = datetime.now(timezone.utc)
+
+            sql_check = "SELECT id FROM subscriptions WHERE user_id = :user_id AND status = 'active'"
+            res = await session.execute(text(sql_check), {"user_id": user_id})
+            rows = res.fetchall()
+
+            if not rows:
+                console.print(f"[yellow]⚠️ У пользователя с ID {user_id} нет active подписок для отзыва.[/yellow]")
+                return
+
+            sql_update = """
+                UPDATE subscriptions
+                SET status = 'cancelled', updated_at = :now
+                WHERE user_id = :user_id AND status = 'active'
+            """
+            await session.execute(text(sql_update), {"user_id": user_id, "now": now})
+            await session.commit()
+
+            sub_ids = [str(r[0]) for r in rows]
+            console.print(f"[green]✅ Успешно отозваны подписки со статусом active (ID: {', '.join(sub_ids)}) для пользователя {user_id}.[/green]")
+            console.print("[yellow]➜ Напоминание: Синхронизируйте изменения с нодой через uadmin fix sync.[/yellow]")
+
+    asyncio.run(_revoke())
+
+
 if __name__ == "__main__":
     sub(prog_name="uadmin sub")
