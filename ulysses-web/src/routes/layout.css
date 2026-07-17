@@ -3,7 +3,8 @@
 
 /* Стилизация корневых элементов и фона для всего приложения */
 :root, body {
-  background-color: #0f172a !important; /* Slate 900 — глубокий, но мягкий */
+  background-color: #0f172a; /* Базовый slate-900 */
+  /* background-color: #0f172a !important; /\* Slate 900 — глубокий, но мягкий *\/ */
   color: #e2e8f0 !important;            /* Slate 200 — тёплый светлый текст */
 }
 
@@ -20,7 +21,7 @@ h2 {
   font-weight: 600;   /* font-semibold */
   color: #94a3b8 !important; /* Slate 400 — спокойный серо-голубой */
   margin-top: 2rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.2rem;
 }
 
 /* Глобальный стиль для обычного текста (абзацев) */

@@ -1,3 +1,11 @@
+# cli/system_info.py
+
+# МОНИТОРИНГ РЕСУРСОВ И ДИАГНОСТИКА СЕРВИСОВ СЕРВЕРА CLI SYSTEM
+# Модуль собирает и структурирует телеметрию операционной системы Linux.
+# Выполняет сканирование памяти, дискового пространства, системных slices,
+# проверяет доступность портов через сокеты и извлекает логи journalctl,
+# изолируя конфликты ручных запусков от фоновых демонов systemd.
+
 import asyncio
 import subprocess
 import socket
@@ -7,6 +15,13 @@ from rich.table import Table
 from rich.panel import Panel
 
 console = Console()
+BACKEND_API_URL = "http://127.0.0.1:8000"
+
+# Настройки контекста для жесткого переопределения кнопок хелпа Click на uadmin
+CONTEXT_SETTINGS = dict(
+    help_option_names=['-h', '--help'],
+    max_content_width=120
+)
 
 def check_port_status(port: int) -> bool:
     """Проверка доступности локального порта через сокеты"""
@@ -15,6 +30,7 @@ def check_port_status(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         return s.connect_ex(('127.0.0.1', port)) == 0
+
 
 def find_manual_conflicting_processes(port: int = None, search_term: str = None):
     """Поиск ручных процессов, запущенных вне system.slice (логика из bash)"""
@@ -46,6 +62,7 @@ def find_manual_conflicting_processes(port: int = None, search_term: str = None)
         pass
     return conflicts
 
+
 def get_detailed_process_info(search_term: str):
     """Вспомогательная функция для сбора расширенных данных о процессах"""
     try:
@@ -64,10 +81,12 @@ def get_detailed_process_info(search_term: str):
         for line in output.split("\n"):
             parts = line.split(None, 10)
             if len(parts) >= 11:
+                # Исправлено: корректная распаковка индексов массива вместо дублей
                 table.add_row(parts[0], parts[1], f"{parts[2]}%", f"{parts[3]}%", parts[10][:70])
         return table
     except Exception as e:
         return f"[red]Ошибка сбора данных: {e}[/red]"
+
 
 def get_service_logs(service_name: str, lines: int = 10):
     """Получение последних строк логов сервиса через journalctl"""
@@ -79,22 +98,20 @@ def get_service_logs(service_name: str, lines: int = 10):
         return "[dim]Не удалось получить логи через journalctl. Проверьте конфигурацию сервиса.[/dim]"
 
 
-@click.command()
+@click.command(context_settings=CONTEXT_SETTINGS)
 @click.argument('component', type=click.Choice(['all', 'bot', 'back', 'web', 'db', 'ram']), default='all')
 @click.option('--logs', '-l', is_flag=True, help="Показать последние логи выбранного компонента")
 @click.option('--lines', '-n', default=10, help="Количество строк логов (по умолчанию 10)")
 def system_info(component, logs, lines):
     """Выводит системные метрики сервера или подробный анализ конкретного компонента.
 
-    Доступные компоненты: all, bot, back, web, db, ram
+    Доступные компоненты: all, bot, back, web, db, ram\n
+    Пример: uadmin system all --logs
     """
-
     async def _show():
-        # Импортируем внутри функции, чтобы избежать циклических зависимостей
         from app.system_info import collect_system_metrics
         metrics = await collect_system_metrics()
 
-        # Предварительно проверяем наличие ручных процессов для корректировки статусов
         has_manual_bot = len(find_manual_conflicting_processes(search_term="ulysses-bot/main.py")) > 0
         has_manual_back = len(find_manual_conflicting_processes(port=8000)) > 0
 
@@ -117,7 +134,6 @@ def system_info(component, logs, lines):
             pg_status = "🟢" if pg == "RUNNING" else "🔴"
             table.add_row("🐘 PostgreSQL", pg, pg_status)
 
-            # Умный статус для Бота
             bot = metrics.get("telegram_bot_status", "UNKNOWN")
             if bot != "RUNNING" and has_manual_bot:
                 bot_display, bot_status = "RUNNING (Manual)", "🟢"
@@ -125,7 +141,6 @@ def system_info(component, logs, lines):
                 bot_display, bot_status = bot, ("🟢" if bot == "RUNNING" else "🔴")
             table.add_row("🤖 Telegram Bot", bot_display, bot_status)
 
-            # Умный статус для Бэкенда
             api = metrics.get("backend_status", "UNKNOWN")
             if api != "ONLINE" and has_manual_back:
                 api_display, api_status = "ONLINE (Manual)", "🟢"
@@ -133,7 +148,6 @@ def system_info(component, logs, lines):
                 api_display, api_status = api, ("🟢" if api == "ONLINE" else "🔴")
             table.add_row("⚙️ Backend API", api_display, api_status)
 
-            # Общий статус системы «Здорова», если процессы запущены хотя бы как-то
             is_bot_ok = (bot == "RUNNING" or has_manual_bot)
             is_back_ok = (api == "ONLINE" or has_manual_back)
             is_db_ok = (pg == "RUNNING")
@@ -145,7 +159,6 @@ def system_info(component, logs, lines):
             console.print(table)
             console.print("")
 
-            # Вторая таблица: Топ по RAM
             proc_table = Table(title="🧠 ТОП-3 процесса по потреблению RAM")
             proc_table.add_column("PID", style="dim")
             proc_table.add_column("Процент RAM", style="magenta")
@@ -165,9 +178,7 @@ def system_info(component, logs, lines):
             console.print(proc_table)
             return
 
-        # --- СЦЕНАРИЙ 2: ДЕТАЛЬНЫЙ АНАЛИЗ КОМПОНЕНТОВ ---
-        # --- СЦЕНАРИЙ 2: ДЕТАЛЬНЫЙ АНАЛИЗ КОМПОНЕНТОВ ---
-
+        # --- СЦЕНАРИЙ 2: ДЕТАЛЬНЫЙ АНАЛИЗ ОТДЕЛЬНЫХ КОМПОНЕНТОВ ---
         if component == 'bot':
             status = metrics.get("telegram_bot_status", "UNKNOWN")
             if status != "RUNNING" and has_manual_bot:
@@ -267,3 +278,7 @@ def system_info(component, logs, lines):
                 console.print(f"[red]Ошибка при получении топа RAM: {e}[/red]")
 
     asyncio.run(_show())
+
+
+if __name__ == "__main__":
+    system_info(prog_name="uadmin system")

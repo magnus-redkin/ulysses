@@ -1,3 +1,10 @@
+# cli/vpn.py
+
+# УПРАВЛЕНИЕ КЛЮЧАМИ ДОСТУПА И ИНТЕГРАЦИЕЙ С VPN НОДАМИ CLI VPN
+# Модуль инкапсулирует инструменты оператора для генерации подписочных конфигураций.
+# Извлекает перманентные UUID пользователей из СУБД, автоматически парсит
+# доменные имена/IP нод из конфигурации бэкенда и строит готовые VLESS/Sing-box туннели.
+
 import asyncio
 import click
 from rich.console import Console
@@ -5,14 +12,26 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
-from app.config import settings  # Импортируем конфиг бэкенда
+from app.config import settings
 
 console = Console()
 
-@click.group()
+# Настройки контекста для жесткого переопределения кнопок хелпа Click на uadmin
+CONTEXT_SETTINGS = dict(
+    help_option_names=['-h', '--help'],
+    max_content_width=120
+)
+
+@click.group(context_settings=CONTEXT_SETTINGS)
 def vpn():
-    """Управление VPN-ключами и интеграцией с нодами (Hiddify)"""
+    """Управление VPN-ключами и интеграцией с нодами (Hiddify).
+
+    Использование: uadmin vpn КОМАНДА [АРГУМЕНТЫ]...
+    """
     pass
+
+# Переопределяем отображение имени группы в подсказках хелпа нижнего уровня
+vpn.get_usage = lambda ctx: "uadmin vpn [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
 @vpn.command(name="link")
@@ -20,7 +39,10 @@ def vpn():
 @click.option("--email", help="Поиск по Email пользователя")
 @click.option("--tg-id", type=int, help="Поиск по Telegram ID")
 def vpn_link(id, email, tg_id):
-    """Сгенерировать и показать ссылку доступа (конфиг) для пользователя"""
+    """Сгенерировать и показать ссылку доступа (конфиг) для пользователя.
+
+    Пример: uadmin vpn link --tg-id 8397318328
+    """
     if not id and not email and not tg_id:
         raise click.UsageError("❌ Ошибка: укажите хотя бы один фильтр (--id, --email или --tg-id)")
 
@@ -52,19 +74,14 @@ def vpn_link(id, email, tg_id):
                 console.print("[yellow]⚠️ У этого пользователя еще не сгенерирован Hiddify UUID.[/yellow]")
                 return
 
-            # Безопасно вытягиваем домен из конфига бэкенда или берем IP из HIDDIFY_API_URL
             domain = getattr(settings, "HIDDIFY_DOMAIN", None)
             if not domain and hasattr(settings, "HIDDIFY_API_URL"):
-                # Парсим IP-адрес из урла 'http://193.188.22.128/X6CbExbUw2/...'
                 url_parts = settings.HIDDIFY_API_URL.split("/")
                 if len(url_parts) > 2:
                     domain = url_parts[2]
 
             domain = domain or "193.188.22.128"
-
-            # Формируем подписку с ПРОБЕЛОМ после двоеточия, чтобы терминал/браузер не прятал текст
             sub_link = f"https://{domain}/X6CbExbUw2/sub/{u_uuid}/"
-
             identity = u_email if u_email else f"Telegram: {u_tg_id}"
 
             card_content = (
@@ -82,7 +99,10 @@ def vpn_link(id, email, tg_id):
 
 @vpn.command(name="status")
 def vpn_status():
-    """Проверить статус настройки интеграции с Hiddify API"""
+    """Проверить статус настройки интеграции с Hiddify API нод.
+
+    Пример: uadmin vpn status
+    """
     table = Table(title="📡 Статус настроек интеграции VPN")
     table.add_column("Параметр API", style="cyan")
     table.add_column("Значение / Статус", style="green")
@@ -95,3 +115,7 @@ def vpn_status():
     table.add_row("🔑 Hiddify API Key", key_status)
 
     console.print(table)
+
+
+if __name__ == "__main__":
+    vpn(prog_name="uadmin vpn")

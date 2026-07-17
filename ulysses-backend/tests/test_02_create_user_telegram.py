@@ -71,22 +71,29 @@ async def test_create_user_telegram():
 
     return True
 
-
 async def main():
+    success = False
     try:
+        # Запускаем основной сценарий теста
         success = await test_create_user_telegram()
     except AssertionError as e:
-        print(f"\n❌ Ошибка: {e}")
-        success = False
+        print(f"\n❌ Ошибка утверждения: {e}")
     except Exception as e:
         print(f"\n❌ Неожиданная ошибка: {e}")
-        success = False
+    finally:
+        # 🌟 ГАРАНТИРОВАННЫЙ БЛОК ОЧИСТКИ (Выполнится ВСЕГДА)
+        print(f"\n🧹 [АВТО-ФИНАЛИЗАТОР] Скрипт завершен. Принудительное удаление хвостов...")
+        try:
+            # Вызываем каскадное удаление по нашему тестовому TG ID
+            await cleanup_user(tg_id=TEST_TG_ID)
+            print(f"   ✅ Операционная среда базы данных полностью вычищена.")
+        except Exception as clean_err:
+            print(f"   ❌ Критическая ошибка финализатора при очистке БД: {clean_err}")
 
     print("\n" + "=" * 60)
-    print("✅ ТЕСТ 02 ПРОЙДЕН!" if success else "❌ ТЕСТ 02 НЕ ПРОЙДЕН!")
+    print("✅ ТЕСТ 02 УСПЕШНО ВЫПОЛНЕН!" if success else "❌ ТЕСТ 02 ПРОВАЛЕН!")
     print("=" * 60)
     return success
-
 
 if __name__ == "__main__":
     asyncio.run(main())

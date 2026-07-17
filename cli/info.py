@@ -1,10 +1,25 @@
+# cli/info.py
+
+# ИНТЕРАКТИВНАЯ СПРАВОЧНАЯ СИСТЕМА И ИНСТРУКЦИИ ОПЕРАТОРА CLI INFO
+# Модуль отвечает за вывод расширенной документации по командам Ulysses VPN.
+# Считывает файл help.md и рендерит его через системный пейджер less для удобного
+# постраничного скроллинга, предоставляя оператору детальные примеры использования утилиты.
+
 import os
 import subprocess
 import click
 
-@click.command(name="help")
+# Настройки контекста для жесткого переопределения ключей хелпа Click на uadmin
+CONTEXT_SETTINGS = dict(
+    help_option_names=['-h', '--help']
+)
+
+@click.command(name="help", context_settings=CONTEXT_SETTINGS)
 def show_help():
-    """Показать сводную интерактивную таблицу всех команд системы"""
+    """Показать сводную интерактивную таблицу всех команд системы.
+
+    Пример: uadmin help
+    """
     # Вычисляем абсолютный путь к help.md относительно корня проекта
     help_path = os.path.expanduser("~/Ulysses/cli/help.md")
 
@@ -19,3 +34,8 @@ def show_help():
     except Exception:
         # Если less недоступен (например, в урезанном контейнере), просто выводим через cat
         subprocess.run(["cat", help_path])
+
+
+if __name__ == "__main__":
+    # Обеспечиваем нативное отображение синтаксиса uadmin при автономном запуске
+    show_help(prog_name="uadmin help")

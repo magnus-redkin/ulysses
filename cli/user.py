@@ -1,3 +1,10 @@
+# cli/user.py
+
+# АРХИТЕКТУРА И ИНСТРУМЕНТЫ УПРАВЛЕНИЯ КЛИЕНТСКИМИ АККАУНТАМИ CLI USER
+# Данный модуль инкапсулирует команды администратора для точечной работы с пользователями.
+# Чтение списка и ручное создание выполняются прямыми транзакциями в PostgreSQL через AsyncSessionLocal,
+# а каскадное удаление делегируется эндпоинтам бэкенда для обеспечения синхронности с нодами VPN.
+
 import asyncio
 import click
 import httpx
@@ -13,14 +20,30 @@ from app.database import AsyncSessionLocal
 console = Console()
 BACKEND_API_URL = "http://127.0.0.1:8000"
 
-@click.group()
+# Жестко переопределяем имя исполняемого файла в хелпе Click на uadmin
+CONTEXT_SETTINGS = dict(
+    help_option_names=['-h', '--help'],
+    max_content_width=120
+)
+
+@click.group(context_settings=CONTEXT_SETTINGS, short_help="Управление пользователями")
 def user():
-    """Управление пользователями Ulysses VPN"""
+    """Управление пользователями Ulysses VPN.
+
+    Использование: uadmin user КОМАНДА [АРГУМЕНТЫ]...
+    """
     pass
+
+# Переопределяем отображение имени группы в хелпах нижнего уровня
+user.get_usage = lambda ctx: "uadmin user [ОПЦИИ] КОМАНДА [ARGS]..."
+
 
 @user.command(name="list")
 def user_list():
-    """Показать детальный список всех пользователей (прямой запрос к БД)"""
+    """Показать детальный список всех пользователей (прямой запрос к БД).
+
+    Пример: uadmin user list
+    """
     async def _list():
         async with AsyncSessionLocal() as session:
             query = text("SELECT id, tg_user_id, tg_username, email, hiddify_uuid, created_at FROM users ORDER BY id")
@@ -40,7 +63,6 @@ def user_list():
             table.add_column("Создан", style="dim")
 
             for r in rows:
-                # Распаковываем полученную строку для безопасного вывода
                 u_id, tg_id, username, email, hf_uuid, created_at = r
 
                 table.add_row(
@@ -57,25 +79,26 @@ def user_list():
 
 
 @user.command(name="create")
-@click.option("--email", help="Email пользователя")
-@click.option("--tg-id", type=int, help="Telegram User ID")
-@click.option("--username", help="Telegram Username (без @)")
+@click.option("--email", help="Email пользователя. Пример: client@example.com")
+@click.option("--tg-id", type=int, help="Telegram User ID. Пример: 8397318328")
+@click.option("--username", help="Telegram Username без символа @. Пример: magnusfredkin")
 def user_create(email, tg_id, username):
-    """Создать пользователя вручную (прямой запрос к БД)"""
+    """Создать пользователя вручную (прямой запрос к БД).
+
+    Пример: uadmin user create --tg-id 8397318328 --username magnusfredkin
+    """
     if not email and not tg_id:
         raise click.UsageError("❌ Ошибка: необходимо указать хотя бы --email или --tg-id")
 
     async def _create():
         new_uuid = str(uuid.uuid4())
         async with AsyncSessionLocal() as session:
-            # Проверяем дубликаты по Email
             if email:
                 res = await session.execute(text("SELECT id FROM users WHERE email = :e"), {"e": email})
                 if res.fetchone():
                     console.print(f"[red]❌ Пользователь с email {email} уже существует.[/red]")
                     return
 
-            # Проверяем дубликаты по Telegram ID
             if tg_id:
                 res = await session.execute(text("SELECT id FROM users WHERE tg_user_id = :id"), {"id": tg_id})
                 if res.fetchone():
@@ -101,17 +124,19 @@ def user_create(email, tg_id, username):
 
 
 @user.command(name="delete")
-@click.option("--id", type=int, help="Поиск по локальному ID базы данных")
+@click.option("--id", type=int, help="Поиск и каскадное удаление по локальному ID базы")
 @click.option("--email", help="Поиск по Email")
 @click.option("--tg-id", type=int, help="Поиск по Telegram ID")
-@click.option("--target", type=click.Choice(["all", "db", "hiddify"]), default="all", help="Что именно удалять")
-@click.confirmation_option(prompt="Вы уверены, что хотите удалить пользователя?")
+@click.option("--target", type=click.Choice(["all", "db", "hiddify"]), default="all", help="Что именно удалять (all - везде, db - только БД, hiddify - только нода)")
+@click.confirmation_option(prompt="Вы уверены, что хотите полностью удалить пользователя?")
 def user_delete(id, email, tg_id, target):
-    """Удалить пользователя из БД и Hiddify (через API бэкенда)"""
+    """Удалить пользователя из БД и нод VPN (через API бэкенда).
+
+    Пример: uadmin user delete --tg-id 8397318328
+    """
     async def _delete():
         params = {"target": target}
 
-        # Если передан внутренний ID, сначала найдем контакты в БД прямым запросом
         if id:
             async with AsyncSessionLocal() as session:
                 res = await session.execute(text("SELECT tg_user_id, email, hiddify_uuid FROM users WHERE id = :id"), {"id": id})
@@ -144,3 +169,33 @@ def user_delete(id, email, tg_id, target):
             console.print(f"[red]❌ Ошибка запроса к API: {e}[/red]")
 
     asyncio.run(_delete())
+
+
+@user.command(name="clean")
+@click.option("--force", is_flag=True, help="Пропустить интерактивное подтверждение")
+def user_clean(force):
+    """Автоматическое каскадное удаление всех тестовых аккаунтов (example.com / internal).
+
+    Пример: uadmin user clean
+    """
+    if not force:
+        if not click.confirm("⚠️ Вы уверены, что хотите НАВСЕГДА удалить ВСЕХ тестовых пользователей (65+ записей)?"):
+            console.print("[yellow]❌ Операция отменена пользователем.[/yellow]")
+            return
+
+    console.print("[yellow]⏳ Запуск процедуры глобальной очистки мусора на бэкенде...[/yellow]")
+
+    async def _clean():
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(f"{BACKEND_API_URL}/api/admin/fix/cleanup-test-users")
+                if response.status_code == 200:
+                    data = response.json()
+                    console.print(f"[green]✅ Глобальная чистка завершена успешно![/green]")
+                    console.print(f"   Удалено тестовых аккаунтов: [bold]{data.get('deleted_count', 0)}[/bold]")
+                else:
+                    console.print(f"[red]❌ Ошибка бэкенда: HTTP {response.status_code} - {response.text}[/red]")
+        except Exception as e:
+            console.print(f"[red]❌ Ошибка подключения к бэкенду: {e}[/red]")
+
+    asyncio.run(_clean())

@@ -10,4 +10,4 @@ email: support@ulysses.best
 
 **Support, technical questions**
 
-<a href="https://t.me/ulysses_support_bot">@Улисс</a>
+<a href="https://t.me/ulysses_vpn_bot">@Улисс</a>

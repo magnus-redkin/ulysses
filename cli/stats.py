@@ -1,3 +1,10 @@
+# cli/stats.py
+
+# АГРЕГАЦИЯ СТАТИСТИКИ И МОНИТОРИНГ ОЧЕРЕДЕЙ ВЫДАЧИ CLI STATS
+# Модуль собирает верхнеуровневые бизнес-метрики системы через API бэкенда.
+# При обнаружении зависших подписок или транзакций в карантине, выполняет прямой
+# запрос к PostgreSQL для вывода детальной таблицы инцидентов с логами ошибок нод.
+
 import asyncio
 import httpx
 import click
@@ -10,10 +17,18 @@ from app.database import AsyncSessionLocal
 console = Console()
 BACKEND_API_URL = "http://127.0.0.1:8000"
 
-@click.command()
-def stats():
-    """Показать общую статистику Ulysses VPN и зависшие подписки"""
+# Настройки контекста для жесткого переопределения ключей хелпа Click на uadmin
+CONTEXT_SETTINGS = dict(
+    help_option_names=['-h', '--help'],
+    max_content_width=120
+)
 
+@click.command(context_settings=CONTEXT_SETTINGS)
+def stats():
+    """Показать общую статистику Ulysses VPN и зависшие подписки.
+
+    Пример: uadmin stats
+    """
     async def _stats():
         try:
             # 1. Запрашиваем агрегированные данные из API бэкенда
@@ -91,10 +106,14 @@ def stats():
                         console.print(p_table)
                         console.print("[yellow]➜ Подсказка: Попробуйте протолкнуть их командой: uadmin fix pending --force[/yellow]")
 
-
         except httpx.ConnectError:
             console.print("[red]❌ Ошибка подключения к Backend API. Убедитесь, что бэкенд запущен.[/red]")
         except Exception as e:
             console.print(f"[red]❌ Ошибка выполнения CLI команды: {e}[/red]")
 
     asyncio.run(_stats())
+
+
+if __name__ == "__main__":
+    # Настройка автономного запуска под именем uadmin
+    stats(prog_name="uadmin stats")
