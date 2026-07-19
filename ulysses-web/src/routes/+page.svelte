@@ -48,8 +48,8 @@
         <li><b>VLESS</b> - упаковывает ваши данные в стандартные web-пакеты</li>
         <li><b>gRPC</b> - отправляет их в виде потока стандартных запросов HTTP/2</li>
         <li><b>xHTTP</b> - современная замена gRPC</li>
-        <li><b>REALITY</b> - показывает системам блокировок сертификат любого известного сайта</li>
-        <li><b>Ulysses</b> - служит щитом, мгновенно подменяя ip адрес в случае его блокировки. Как CloudFlare, но не шпионя за вами - мы используем только открытый код под свободной лицензией</li>
+        <li><b>REALITY</b> - показывает сертификат любого известного сайта</li>
+        <li><b>Ulysses</b> - служит щитом, мгновенно подменяя ip адрес в случае необходимости. Как CloudFlare, но не шпионя за вами - мы используем только открытый код под свободной лицензией</li>
       </ul>
 
       <p class="my-6 font-bold">несколько минут, и вы в сети:</p>
@@ -69,7 +69,8 @@
         <li><b>VLESS</b> - wraps your data into standard web packets</li>
         <li><b>gRPC</b> - sends data as a stream of standard HTTP/2 requests</li>
         <li><b>xHTTP</b> - a modern replacement for gRPC</li>
-        <li><b>REALITY</b> - displays a certificate of any well-known website to censorship systems</li>
+         <!-- to censorship systems -->
+        <li><b>REALITY</b> - displays a certificate of any well-known website</li>
         <li><b>Ulysses</b> - acts as a shield, instantly rotating IP addresses in case of a block. Just like CloudFlare, but without spying on you — we use exclusively open-source code under free licenses</li>
         <li><b>support</b>: <a href="https://t.me/ulysses_vpn_bot">@Улисс</a></li>
       </ul>
@@ -97,9 +98,9 @@
     </div>
 
     {#if locale.current === 'ru'}
-      <p><b>поддержка</b> Телеграм: <a href="https://t.me/ulysses_vpn_bot">@Улисс</a></p>
+      <p><b>Телеграм</b>: <a href="https://t.me/ulysses_vpn_bot">@ulysses_vpn_bot</a></p>
     {:else}
-      <p><b>support</b> Telegram: <a href="https://t.me/ulysses_vpn_bot">@Улисс</a></p>
+      <p><b>Telegram</b>: <a href="https://t.me/ulysses_vpn_bot">@ulysses_vpn_bot</a></p>
     {/if}
 
   </article>

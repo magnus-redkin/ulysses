@@ -10,6 +10,7 @@ from app.routers.user import router as user_router
 from app.routers.billing import router as billing_router
 from app.routers.admin import router as admin_router
 from app.routers.test_billing import router as test_billing_router
+from app.routers.sub_render import router as sub_render_router  # 🟢 Исправлено: Добавили импорт
 
 app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0")
 
@@ -28,6 +29,7 @@ app.include_router(user_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
 app.include_router(test_billing_router)
+app.include_router(sub_render_router)  # 🟢 Исправлено: Передали верное имя переменной
 
 @app.get("/health")
 async def health_check():

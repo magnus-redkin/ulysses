@@ -77,51 +77,93 @@ def user_list():
 
     asyncio.run(_list())
 
+# Внутри ulysses-backend/cli/user.py
 
 @user.command(name="create")
-@click.option("--email", help="Email пользователя. Пример: client@example.com")
-@click.option("--tg-id", type=int, help="Telegram User ID. Пример: 8397318328")
-@click.option("--username", help="Telegram Username без символа @. Пример: magnusfredkin")
-def user_create(email, tg_id, username):
-    """Создать пользователя вручную (прямой запрос к БД).
-
-    Пример: uadmin user create --tg-id 8397318328 --username magnusfredkin
+@click.option("--tg-id", type=int, required=True, help="Telegram ID нового пользователя")
+@click.option("--username", type=str, required=True, help="Telegram username (например, @magnus)")
+def user_create(tg_id, username):
     """
-    if not email and not tg_id:
-        raise click.UsageError("❌ Ошибка: необходимо указать хотя бы --email или --tg-id")
+    Создать нового пользователя в системе биллинга 'под ключ'.
+    Автоматически генерирует UUID, каскадно создает запись в PostgreSQL,
+    активирует 3-дневный триал (Free) и делает провижн на ноду Hiddify v2.
+    """
+    clean_username = username.lstrip("@").strip()
 
-    async def _create():
-        new_uuid = str(uuid.uuid4())
+    async def _create_user_pipeline():
+        import uuid as uuid_lib
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+        from app.services.hiddify_client import HiddifyProvisioner
+
+        new_uuid = str(uuid_lib.uuid4())
+        console.print(f"[yellow]⏳ Запуск каскадного создания пользователя для TG ID {tg_id}...[/yellow]")
+
         async with AsyncSessionLocal() as session:
-            if email:
-                res = await session.execute(text("SELECT id FROM users WHERE email = :e"), {"e": email})
-                if res.fetchone():
-                    console.print(f"[red]❌ Пользователь с email {email} уже существует.[/red]")
+            try:
+                # 1. Проверяем дубликаты в СУБД
+                res_check = await session.execute(text("SELECT id FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_id})
+                if res_check.fetchone():
+                    console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} уже существует в базе биллинга![/red]")
                     return
 
-            if tg_id:
-                res = await session.execute(text("SELECT id FROM users WHERE tg_user_id = :id"), {"id": tg_id})
-                if res.fetchone():
-                    console.print(f"[red]❌ Пользователь с Telegram ID {tg_id} уже существует.[/red]")
-                    return
+                # 2. ТРАНЗАКЦИЯ А: Создаем аккаунт пользователя
+                sql_user = """
+                    INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, created_at, updated_at)
+                    VALUES (:tg_id, :username, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id
+                """
+                res_user = await session.execute(text(sql_user), {
+                    "tg_id": tg_id, "username": clean_username, "uuid": new_uuid
+                })
+                user_internal_id = res_user.scalar_one()
 
-            query = text("""
-                INSERT INTO users (tg_user_id, tg_username, email, hiddify_uuid)
-                VALUES (:tg_id, :username, :email, :uuid)
-                RETURNING id
-            """)
-            result = await session.execute(query, {
-                "tg_id": tg_id,
-                "username": username,
-                "email": email,
-                "uuid": new_uuid
-            })
-            await session.commit()
-            new_id = result.scalar_one()
-            console.print(f"[green]✅ Пользователь успешно создан! ID: {new_id} | UUID: {new_uuid}[/green]")
+                # 3. ТРАНЗАКЦИЯ Б: Сразу же выдаем бесплатный тариф (Free на 3 дня)
+                # Это жестко свяжет профиль биллинга и заставит HFM отобразить юзера в браузере!
+                now = datetime.now(timezone.utc)
+                expires_at = now + timedelta(days=3)
 
-    asyncio.run(_create())
+                sql_sub = """
+                    INSERT INTO subscriptions (
+                        user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at, provisioning_attempts
+                    )
+                    VALUES (
+                        :uid, 'sub_free', 'active', 'main', :starts, :expires, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0
+                    )
+                """
+                await session.execute(text(sql_sub), {
+                    "uid": user_internal_id, "starts": now, "expires": expires_at
+                })
 
+                # Фиксируем обе записи в PostgreSQL одной неделимой транзакцией (ACID)
+                await session.commit()
+                console.print(f"[green]💾 Локальный контур СУБД успешно обновлен. Внутренний ID: {user_internal_id}[/green]")
+
+            except Exception as db_err:
+                await session.rollback()
+                console.print(f"[red]❌ Критический сбой СУБД PostgreSQL: {db_err}[/red]")
+                return
+
+        # 4. СЕТЕВОЙ ШАГ: Физически создаем пользователя на удаленной ноде Hiddify Manager v2
+        try:
+            provisioner = HiddifyProvisioner()
+            # Наш метод create_user отправит POST на /api/v2/admin/user/ и применит кэш
+            hiddify_success = await provisioner.create_user(
+                uuid=new_uuid,
+                name=f"tg_{tg_id}"
+            )
+
+            if hiddify_success:
+                console.print(f"[green]✅ Успешно: Профиль активирован в Hiddify Manager v2 под именем tg_{tg_id}![/green]")
+                console.print(f"[magenta]🔗 Персональный UUID: {new_uuid}[/magenta]")
+            else:
+                console.print("[red]❌ Предупреждение: Нода Hiddify v2 отклонила POST-запрос создания.[/red]")
+        except Exception as hf_err:
+            console.print(f"[red]❌ Сетевой сбой транспорта при связи с API Hiddify v2: {hf_err}[/red]")
+
+    import asyncio
+    asyncio.run(_create_user_pipeline())
 
 @user.command(name="delete")
 @click.option("--id", type=int, help="Поиск и каскадное удаление по локальному ID базы")

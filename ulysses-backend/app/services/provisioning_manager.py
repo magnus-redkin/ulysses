@@ -62,7 +62,7 @@ class ProvisioningManager:
             if exists:
                 return True
 
-        success = await self.provisioner.enable_user(uuid_str)
+        success = await self.provisioner.enable_user(str(uuid_str))
         if success:
             await self.db.execute(text("""
                 UPDATE subscriptions SET status = 'active', provisioning_error = NULL, updated_at = CURRENT_TIMESTAMP

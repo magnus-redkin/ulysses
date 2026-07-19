@@ -1,0 +1,37 @@
+{
+    "ulysses": {
+        "aeza": "tall-harlequin",
+        "type": "brain",
+        "country": "Netherlands",
+        "code": "NL",
+        "ip": [62.60.244.32]
+    },
+    "hfm": {
+        "aeza": "absolute-apricot",
+        "type": "heart",
+        "country": "Austria",
+        "code": "AT",
+        "ip": [45.131.215.185]
+    },
+    "gate-1": {
+        "aeza": "lazy-orange",
+        "type": "gate",
+        "country": "Finland",
+        "code": "FI",
+        "ip": [62.60.249.53, 109.120.184.174, 83.147.216.201]
+    },
+    "gate-2": {
+        "aeza": "subjective-maroo",
+        "type": "gate",
+        "country": "Austria",
+        "code": "AT",
+        "ip": [138.124.25.80, 91.184.241.251]
+    },
+    "gate-3": {
+        "aeza": "positive-yellow",
+        "type": "gate",
+        "country": "Russian Federation ",
+        "code": "RU",
+        "ip": [45.151.102.125, 45.151.102.22]
+    }
+}

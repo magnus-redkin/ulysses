@@ -8,6 +8,4 @@ title: "contacts"
 
 email: support@ulysses.best
 
-**поддержка, технические вопросы**
-
-<a href="https://t.me/ulysses_vpn_bot">@Улисс</a>
+**наш бот в Телеграм**: <a href="https://t.me/ulysses_vpn_bot">@ulysses_vpn_bot</a>

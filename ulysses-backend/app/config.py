@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     ENOT_SECRET_KEY: str = os.getenv("ENOT_SECRET_KEY", "")
     ENOT_HOOK_KEY: str = os.getenv("ENOT_HOOK_KEY", "")
 
+    AEZA_NUMBER: str = ""
+    AEZA_API_KEY: str = ""
 
     @property
     def DATABASE_URL(self) -> str:

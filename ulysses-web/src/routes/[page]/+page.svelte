@@ -39,7 +39,7 @@
       {@const Content = CurrentContent.current}
       <Content />
     {:else}
-      <p class="text-red-500 font-medium">404 - Page not found === </p>
+      <p class="text-red-500 font-medium"> </p>
     {/if}
   </article>
 </main>

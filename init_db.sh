@@ -97,16 +97,6 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payment_attempts(status);
 
--- ТЕСТОВЫЙ ЮЗЕР
-INSERT INTO users (email, created_at)
-VALUES ('test@ulysses.best', CURRENT_TIMESTAMP)
-ON CONFLICT (email) DO NOTHING;
-
--- ТЕСТОВЫЙ ЮЗЕР
-INSERT INTO users (email, created_at)
-VALUES ('test@ulysses.best', CURRENT_TIMESTAMP)
-ON CONFLICT (email) DO NOTHING;
-
 -- BRAIN: Мозг VPN (щиты, телеметрия, инциденты, DNS)
 CREATE SCHEMA IF NOT EXISTS brain;
 
@@ -151,6 +141,7 @@ CREATE INDEX IF NOT EXISTS idx_shields_status ON brain.shields(status);
 CREATE INDEX IF NOT EXISTS idx_telemetry_shield_time ON brain.telemetry(shield_id, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_incidents_shield ON brain.incidents(shield_id);
 
+
 DO \$\$
 BEGIN
     IF NOT EXISTS (
@@ -161,6 +152,27 @@ BEGIN
             FOR EACH ROW EXECUTE FUNCTION update_timestamp();
     END IF;
 END \$\$;
+
+CREATE TABLE IF NOT EXISTS nodes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    aeza_name VARCHAR(100) NOT NULL,
+    country VARCHAR(100) NOT NULL,
+    country_code CHAR(2) NOT NULL,
+    node_type VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gateways (
+    id SERIAL PRIMARY KEY,
+    node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+    ip_address VARCHAR(45) NOT NULL,
+    port INTEGER DEFAULT 443,
+    is_backup BOOLEAN DEFAULT FALSE,
+    status VARCHAR(20) DEFAULT 'active',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_node_ip UNIQUE (node_id, ip_address)
+);
 
 EOF
 
