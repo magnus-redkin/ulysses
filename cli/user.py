@@ -1,84 +1,22 @@
-# cli/user.py
+# ulysses-backend/cli/user.py
 
-# АРХИТЕКТУРА И ИНСТРУМЕНТЫ УПРАВЛЕНИЯ КЛИЕНТСКИМИ АККАУНТАМИ CLI USER
-# Данный модуль инкапсулирует команды администратора для точечной работы с пользователями.
-# Чтение списка и ручное создание выполняются прямыми транзакциями в PostgreSQL через AsyncSessionLocal,
-# а каскадное удаление делегируется эндпоинтам бэкенда для обеспечения синхронности с нодами VPN.
-
-import asyncio
 import click
-import httpx
-import uuid
 from rich.console import Console
 from rich.table import Table
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-
-# Импортируем движок и фабрику сессий прямо из вашего бэкенда
-from app.database import AsyncSessionLocal
 
 console = Console()
-BACKEND_API_URL = "http://127.0.0.1:8000"
 
-# Жестко переопределяем имя исполняемого файла в хелпе Click на uadmin
-CONTEXT_SETTINGS = dict(
-    help_option_names=['-h', '--help'],
-    max_content_width=120
-)
-
-@click.group(context_settings=CONTEXT_SETTINGS, short_help="Управление пользователями")
+@click.group(name="user")
 def user():
-    """Управление пользователями Ulysses VPN.
-
-    Использование: uadmin user КОМАНДА [АРГУМЕНТЫ]...
-    """
+    """Управление пользователями биллинга Ulysses VPN."""
     pass
 
-# Переопределяем отображение имени группы в хелпах нижнего уровня
 user.get_usage = lambda ctx: "uadmin user [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
-@user.command(name="list")
-def user_list():
-    """Показать детальный список всех пользователей (прямой запрос к БД).
-
-    Пример: uadmin user list
-    """
-    async def _list():
-        async with AsyncSessionLocal() as session:
-            query = text("SELECT id, tg_user_id, tg_username, email, hiddify_uuid, created_at FROM users ORDER BY id")
-            result = await session.execute(query)
-            rows = result.fetchall()
-
-            if not rows:
-                console.print("[yellow]⚠️ База данных пользователей пуста.[/yellow]")
-                return
-
-            table = Table(title="👥 Все пользователи системы")
-            table.add_column("ID", style="dim", justify="center")
-            table.add_column("Telegram ID", style="magenta")
-            table.add_column("Username", style="blue")
-            table.add_column("Email", style="cyan")
-            table.add_column("Hiddify UUID", style="green")
-            table.add_column("Создан", style="dim")
-
-            for r in rows:
-                u_id, tg_id, username, email, hf_uuid, created_at = r
-
-                table.add_row(
-                    str(u_id),
-                    str(tg_id) if tg_id else "-",
-                    f"@{username}" if username else "-",
-                    email if email else "-",
-                    str(hf_uuid) if hf_uuid else "-",
-                    created_at.strftime("%Y-%m-%d %H:%M") if created_at else "-"
-                )
-            console.print(table)
-
-    asyncio.run(_list())
-
-# Внутри ulysses-backend/cli/user.py
-
+# ============================================================
+# ➕ КОМАНДА: СОЗДАНИЕ ПОЛЬЗОВАТЕЛЯ (CREATE)
+# ============================================================
 @user.command(name="create")
 @click.option("--tg-id", type=int, required=True, help="Telegram ID нового пользователя")
 @click.option("--username", type=str, required=True, help="Telegram username (например, @magnus)")
@@ -120,7 +58,6 @@ def user_create(tg_id, username):
                 user_internal_id = res_user.scalar_one()
 
                 # 3. ТРАНЗАКЦИЯ Б: Сразу же выдаем бесплатный тариф (Free на 3 дня)
-                # Это жестко свяжет профиль биллинга и заставит HFM отобразить юзера в браузере!
                 now = datetime.now(timezone.utc)
                 expires_at = now + timedelta(days=3)
 
@@ -146,9 +83,9 @@ def user_create(tg_id, username):
                 return
 
         # 4. СЕТЕВОЙ ШАГ: Физически создаем пользователя на удаленной ноде Hiddify Manager v2
+        hiddify_success = False
         try:
             provisioner = HiddifyProvisioner()
-            # Наш метод create_user отправит POST на /api/v2/admin/user/ и применит кэш
             hiddify_success = await provisioner.create_user(
                 uuid=new_uuid,
                 name=f"tg_{tg_id}"
@@ -156,88 +93,174 @@ def user_create(tg_id, username):
 
             if hiddify_success:
                 console.print(f"[green]✅ Успешно: Профиль активирован в Hiddify Manager v2 под именем tg_{tg_id}![/green]")
-                console.print(f"[magenta]🔗 Персональный UUID: {new_uuid}[/magenta]")
             else:
                 console.print("[red]❌ Предупреждение: Нода Hiddify v2 отклонила POST-запрос создания.[/red]")
         except Exception as hf_err:
             console.print(f"[red]❌ Сетевой сбой транспорта при связи с API Hiddify v2: {hf_err}[/red]")
 
+        # 5. ОКОНЧАТЕЛЬНАЯ СБОРКА И ВЫВОД ПАРАДНОЙ ССЫЛКИ ПОДПИСКИ
+        base_domain = "ulysses.best"
+        client_sub_url = f"https://{base_domain}/subscription/{new_uuid}/"
+
+        console.print(f"\n[bold green]🎉 Каскад создания пользователя полностью завершен![/bold green]")
+        console.print(f"👤 Telegram ID: [cyan]{tg_id}[/cyan] | Юзернейм: [cyan]@{clean_username}[/cyan]")
+        console.print(f"🔑 Персональный UUID: [yellow]{new_uuid}[/yellow]")
+        console.print(f"🔗 [bold magenta]ФИНАЛЬНАЯ ССЫЛКА ДЛЯ КЛИЕНТА (Hiddify/Sing-box):[/bold magenta]")
+        console.print(f"[bold white on magenta] {client_sub_url} [/bold white on magenta]\n")
+
+        # 6. УВЕДОМЛЕНИЕ ПОЛЬЗОВАТЕЛЯ В ТЕЛЕГРАМ-БОТ
+        if hiddify_success:
+            try:
+                from app.services.telegram_bot import send_telegram_message
+
+                message_text = (
+                    f"🎉 **Ваш бесплатный тест-драйв Ulysses VPN активирован на 3 дня!**\n\n"
+                    f"🔑 Ваша персональная ссылка подписки (Sing-box JSON):\n"
+                    f"`{client_sub_url}`\n\n"
+                    f"📥 **Инструкция по подключению:**\n"
+                    f"1. Полностью скопируйте ссылку выше.\n"
+                    f"2. Скачайте и откройте приложение **Hiddify Next**.\n"
+                    f"3. Нажмите 'Добавить профиль' ➔ вставьте скопированную ссылку.\n"
+                    f"4. Нажмите кнопку подключения.\n\n"
+                    f"🚀 Приятного и безопасного полета!"
+                )
+
+                bot_sent = await send_telegram_message(tg_id=tg_id, text=message_text)
+                if bot_sent:
+                    console.print(f"[green]✉️ Ссылка автоматически отправлена пользователю в Telegram-бот![/green]")
+                else:
+                    console.print(f"[yellow]⚠️ Бот не смог отправить сообщение. Возможно, юзер еще не нажимал /start.[/yellow]")
+            except Exception as tg_err:
+                console.print(f"[yellow]⚠️ Не удалось отправить сообщение через бота: {tg_err}[/yellow]")
+
     import asyncio
     asyncio.run(_create_user_pipeline())
 
+
+# ============================================================
+# 📋 КОМАНДА: ПРОСМОТР СПИСКА ПОЛЬЗОВАТЕЛЕЙ (LIST)
+# ============================================================
+@user.command(name="list")
+def user_list():
+    """Вывести список всех зарегистрированных пользователей биллинга."""
+    async def _list_users():
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(text("SELECT id, tg_user_id, tg_username, email, hiddify_uuid, created_at FROM users ORDER BY id ASC"))
+            users = res.fetchall()
+
+            if not users:
+                console.print("[yellow]⚠️ База данных пользователей пуста.[/yellow]")
+                return
+
+            table = Table(title="👥 Зарегистрированные пользователи Ulysses")
+            table.add_column("ID", justify="center", style="dim")
+            table.add_column("Telegram ID", style="cyan")
+            table.add_column("Username", style="green")
+            table.add_column("Email", style="blue")
+            table.add_column("Hiddify UUID", style="yellow")
+            table.add_column("Создан", style="magenta")
+
+            for row in users:
+                table.add_row(
+                    str(row[0]),
+                    str(row[1]),
+                    f"@{row[2]}" if row[2] else "-",
+                    row[3] if row[3] else "-",
+                    str(row[4]),
+                    row[5].strftime("%Y-%m-%d %H:%M") if row[5] else "-"
+                )
+            console.print(table)
+
+    import asyncio
+    asyncio.run(_list_users())
+
+
+# ============================================================
+# ❌ КОМАНДА: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ (DELETE)
+# ============================================================
 @user.command(name="delete")
-@click.option("--id", type=int, help="Поиск и каскадное удаление по локальному ID базы")
-@click.option("--email", help="Поиск по Email")
-@click.option("--tg-id", type=int, help="Поиск по Telegram ID")
-@click.option("--target", type=click.Choice(["all", "db", "hiddify"]), default="all", help="Что именно удалять (all - везде, db - только БД, hiddify - только нода)")
-@click.confirmation_option(prompt="Вы уверены, что хотите полностью удалить пользователя?")
-def user_delete(id, email, tg_id, target):
-    """Удалить пользователя из БД и нод VPN (через API бэкенда).
+@click.option("--tg-id", type=int, required=True, help="Telegram ID удаляемого пользователя")
+def user_delete(tg_id):
+    """Удалить пользователя из СУБД и каскадно аннулировать его на ноде HFM."""
+    async def _delete_user_pipeline():
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+        from app.services.hiddify_client import HiddifyProvisioner
 
-    Пример: uadmin user delete --tg-id 8397318328
-    """
-    async def _delete():
-        params = {"target": target}
+        console.print(f"[yellow]⏳ Запуск удаления пользователя с TG ID {tg_id}...[/yellow]")
 
-        if id:
-            async with AsyncSessionLocal() as session:
-                res = await session.execute(text("SELECT tg_user_id, email, hiddify_uuid FROM users WHERE id = :id"), {"id": id})
-                row = res.fetchone()
-                if not row:
-                    console.print(f"[red]❌ Пользователь с ID {id} не найден в БД.[/red]")
-                    return
+        async with AsyncSessionLocal() as session:
+            # Ищем UUID перед удалением для синхронизации с HFM
+            res = await session.execute(text("SELECT hiddify_uuid FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_id})
+            user_row = res.fetchone()
 
-                db_tg_id, db_email, db_uuid = row
-                if db_tg_id: params["tg_user_id"] = db_tg_id
-                if db_email: params["email"] = db_email
-                if db_uuid: params["uuid"] = str(db_uuid)
-        else:
-            if tg_id: params["tg_user_id"] = tg_id
-            if email: params["email"] = email
+            if not user_row:
+                console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} не найден в СУБД биллинга.[/red]")
+                return
 
-        if len(params) == 1:
-            console.print("[red]❌ Укажите --id, --email или --tg-id для удаления.[/red]")
-            return
+            uuid_to_delete = user_row[0]
 
+            try:
+                # Каскадно удаляем из локальной PostgreSQL
+                await session.execute(text("DELETE FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_id})
+                await session.commit()
+                console.print("[green]🗑️ Запись успешно удалена из локальной PostgreSQL.[/green]")
+            except Exception as e:
+                await session.rollback()
+                console.print(f"[red]❌ Сбой СУБД при удалении: {e}[/red]")
+                return
+
+        # Удаляем с удаленной ноды Hiddify Manager v2
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.delete(f"{BACKEND_API_URL}/api/admin/account", params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    console.print(f"[green]✅ Результат удаления: {data}[/green]")
-                else:
-                    console.print(f"[red]❌ Ошибка API: HTTP {response.status_code} - {response.text}[/red]")
-        except Exception as e:
-            console.print(f"[red]❌ Ошибка запроса к API: {e}[/red]")
+            provisioner = HiddifyProvisioner()
+            hiddify_success = await provisioner.delete_user(uuid=uuid_to_delete)
+            if hiddify_success:
+                console.print("[green]✅ Успешно: Пользователь деактивирован и удален из ядра Hiddify Manager v2![/green]")
+            else:
+                console.print("[yellow]⚠️ Предупреждение: Панель HFM не смогла удалить UUID (возможно, он уже был стерт).[/yellow]")
+        except Exception as hf_err:
+            console.print(f"[red]❌ Сетевой сбой при связи с API Hiddify v2: {hf_err}[/red]")
 
-    asyncio.run(_delete())
+    import asyncio
+    asyncio.run(_delete_user_pipeline())
 
+# ============================================================
+# 🔗 КОМАНДА: ПОЛУЧИТЬ ССЫЛКУ ПОДПИСКИ (LINK)
+# ============================================================
+@user.command(name="link")
+@click.option("--tg-id", type=int, required=True, help="Telegram ID пользователя")
+def user_link(tg_id):
+    """Получить окончательную парадную ссылку подписки для существующего пользователя."""
+    async def _get_user_link():
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
 
-@user.command(name="clean")
-@click.option("--force", is_flag=True, help="Пропустить интерактивное подтверждение")
-def user_clean(force):
-    """Автоматическое каскадное удаление всех тестовых аккаунтов (example.com / internal).
+        async with AsyncSessionLocal() as session:
+            # Ищем UUID пользователя по его Telegram ID
+            res = await session.execute(
+                text("SELECT tg_username, hiddify_uuid FROM users WHERE tg_user_id = :tg_id"),
+                {"tg_id": tg_id}
+            )
+            row = res.fetchone()
 
-    Пример: uadmin user clean
-    """
-    if not force:
-        if not click.confirm("⚠️ Вы уверены, что хотите НАВСЕГДА удалить ВСЕХ тестовых пользователей (65+ записей)?"):
-            console.print("[yellow]❌ Операция отменена пользователем.[/yellow]")
-            return
+            if not row:
+                console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} не найден в базе биллинга![/red]")
+                return
 
-    console.print("[yellow]⏳ Запуск процедуры глобальной очистки мусора на бэкенде...[/yellow]")
+            tg_username, hiddify_uuid = row
 
-    async def _clean():
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(f"{BACKEND_API_URL}/api/admin/fix/cleanup-test-users")
-                if response.status_code == 200:
-                    data = response.json()
-                    console.print(f"[green]✅ Глобальная чистка завершена успешно![/green]")
-                    console.print(f"   Удалено тестовых аккаунтов: [bold]{data.get('deleted_count', 0)}[/bold]")
-                else:
-                    console.print(f"[red]❌ Ошибка бэкенда: HTTP {response.status_code} - {response.text}[/red]")
-        except Exception as e:
-            console.print(f"[red]❌ Ошибка подключения к бэкенду: {e}[/red]")
+            # Собираем эталонную парадную ссылку подписки
+            base_domain = "ulysses.best"
+            client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/"
 
-    asyncio.run(_clean())
+            console.print(f"\n[bold green]🔑 Сетевой паспорт пользователя успешно извлечен![/bold green]")
+            console.print(f"👤 Пользователь: [cyan]@{tg_username if tg_username else '—'}[/cyan] (TG ID: {tg_id})")
+            console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
+            console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT:[/bold magenta]")
+            console.print(f"[bold white on magenta] {client_sub_url} [/bold white on magenta]\n")
+
+    import asyncio
+    asyncio.run(_get_user_link())

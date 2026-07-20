@@ -26,7 +26,7 @@ from app.database import AsyncSessionLocal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("seed_nodes")
 
-TOPOLOGY_PATH = os.path.join(ROOT_DIR, "topology.json")
+TOPOLOGY_PATH = os.path.join(BACKEND_DIR, "app", "private", "topology.json")
 
 async def seed_infrastructure():
     """

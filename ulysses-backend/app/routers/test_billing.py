@@ -59,7 +59,8 @@ async def mock_payment_webhook(
         """), {"user_id": user_id})
         last_sub = sub_check.fetchone()
 
-        days_to_add = 30 if tariff_slug == "premium" else 7
+        tariff_slug = "sub_free"
+        days_to_add = 3  # Строго 3 дня бесплатного тест-драйва
 
         now = datetime.utcnow()
         starts_at = now

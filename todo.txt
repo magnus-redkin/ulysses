@@ -131,11 +131,16 @@
 
 
 
+https://ulysses.best/subscription/13714b0a-c134-4480-9981-751c4d68f83d/
 
+curl -k -A "Hiddify Next" -s "https://ulysses.best/subscription/13714b0a-c134-4480-9981-751c4d68f83d/"
 
 https://vpn.ulysses.best/X6CbExbUw2/sub/13714b0a-c134-4480-9981-751c4d68f83d/
 
 curl -k -A "Hiddify Next" -v "http://62.60.249.53/yBEpINrbV7jB/13714b0a-c134-4480-9981-751c4d68f83d/sub/"
+
+
+
 
 
 curl -k -A "Hiddify Next" -s "https://ulysses.best/subscription/13714b0a-c134-4480-9981-751c4d68f83d/"
