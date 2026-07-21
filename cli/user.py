@@ -88,7 +88,9 @@ def user_create(tg_id, username):
             provisioner = HiddifyProvisioner()
             hiddify_success = await provisioner.create_user(
                 uuid=new_uuid,
-                name=f"tg_{tg_id}"
+                name=f"tg_{tg_id}",
+                package_days=3,
+                usage_limit_gb=500
             )
 
             if hiddify_success:

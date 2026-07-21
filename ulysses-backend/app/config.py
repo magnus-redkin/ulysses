@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     AEZA_NUMBER: str = ""
     AEZA_API_KEY: str = ""
 
+    DECOY_SITE: str = ""
+
     @property
     def DATABASE_URL(self) -> str:
         if not self.DB_PASS:

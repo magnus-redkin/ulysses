@@ -64,13 +64,14 @@ class HiddifyProvisioner:
             logger.error(f"❌ Ошибка fetch_all_users: {e}")
         return None
 
-    async def create_user(self, uuid: str, name: str) -> bool:
-        """Физически создает нового пользователя на ноде VPN."""
+    async def create_user(self, uuid: str, name: str, package_days: int = 3, usage_limit_gb: int = 500) -> bool:
+        """Физически создает нового пользователя на ноде VPN с гибкими лимитами."""
+        logger.info(f"📡 [HIDDIFY CLIENT] POST Запрос ➔ URL: '{self.base_url}'")
         payload = {
             "uuid": str(uuid),
             "name": name,
-            "usage_limit_GB": 0,
-            "package_days": 30,
+            "usage_limit_GB": usage_limit_gb,  # 🟢 Динамический лимит (в ГБ)
+            "package_days": package_days,      # 🟢 Динамический срок действия (в днях)
             "mode": "no_reset",
             "enable": True
         }
@@ -79,7 +80,6 @@ class HiddifyProvisioner:
                 response = await client.post(self.base_url, headers=self.headers, json=payload)
                 if response.status_code in (200, 201):
                     logger.info(f"✅ [HIDDIFY CLIENT] Профиль {name} успешно создан на ноде VPN.")
-                    # Принудительно коммитим кэш, чтобы ядро Xray на Сердце мгновенно увидело юзера
                     await self.apply_config()
                     return True
                 logger.error(f"❌ Ошибка create_user: HTTP {response.status_code} - {response.text[:200]}")

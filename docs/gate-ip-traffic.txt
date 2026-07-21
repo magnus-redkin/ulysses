@@ -1,0 +1,117 @@
+# Настройка выхода трафика через гейт (2ip.ru показывает IP гейта)
+
+## Архитектура
+
+Клиент → Гейт (HAProxy) → HFM (Xray Reality) → WireGuard → Гейт (NAT) → Интернет
+
+Гейт: 62.60.249.53 (основной), 109.120.184.174, 83.147.216.201
+HFM:  45.131.215.185
+
+WireGuard сеть: 10.90.0.0/24
+HFM в WireGuard: 10.90.0.1
+Гейт в WireGuard: 10.90.0.3
+
+---
+
+## Часть 1: Гейт
+
+### 1. HAProxy (проброс трафика на HFM)
+
+Файл: /etc/haproxy/haproxy.cfg
+
+frontend https_in
+    bind *:443
+    default_backend https_to_heart
+
+backend https_to_heart
+    server heart 45.131.215.185:443 maxconn 25000
+
+### 2. WireGuard (туннель к HFM)
+
+Установка: sudo apt install -y wireguard
+
+Файл: /etc/wireguard/wg0.conf
+
+[Interface]
+Address = 10.90.0.3/24
+PrivateKey = 8MOBhOuqGgfIuhOLDtzr344cvcuJODF7hdub2V6kBWw=
+
+[Peer]
+PublicKey = zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
+Endpoint = 45.131.215.185:33712
+AllowedIPs = 10.90.0.0/24
+PersistentKeepalive = 25
+
+Запуск:
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
+
+### 3. NAT и форвардинг
+
+sudo sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/24 -o enp0s3 -j MASQUERADE
+
+---
+
+## Часть 2: HFM
+
+### 1. WireGuard (туннель к гейту)
+
+Файл: /etc/wireguard/hiddifywg.conf
+
+В секции [Peer] добавить гейт:
+
+[Peer]
+PublicKey = VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
+AllowedIPs = 0.0.0.0/0
+
+В секции [Interface] добавить (чтобы не потерять SSH):
+
+PostUp = ip rule add from 45.131.215.185 table main priority 50
+PostDown = ip rule del from 45.131.215.185 table main priority 50
+
+Перезапуск:
+sudo wg-quick down hiddifywg && sudo wg-quick up hiddifywg
+
+### 2. Маршрутизация трафика Xray через туннель
+
+sudo ip rule add from 10.90.0.1 table 100
+sudo ip route add default via 10.90.0.3 dev hiddifywg table 100
+
+Проверка:
+curl --interface 10.90.0.1 ifconfig.me
+# Должен показать IP гейта
+
+---
+
+## Часть 3: Клиент
+
+Ссылка формируется с server = IP гейта, остальное от HFM:
+
+vless://UUID@IP_ГЕЙТА:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&hiddify=1&encryption=none&core=xray&headerType=none
+
+Где UUID — актуальный UUID пользователя из HFM.
+
+---
+
+## Ключи WireGuard (для справки)
+
+HFM:
+  Приватный: (в /etc/wireguard/hiddifywg.conf)
+  Публичный: zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
+
+Гейт:
+  Приватный: 8MOBhOuqGgfIuhOLDtzr344cvcuJODF7hdub2V6kBWw=
+  Публичный: VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
+
+---
+
+## Восстановление после ребута
+
+На гейте правила iptables сбрасываются. Сохранить:
+
+sudo apt install -y iptables-persistent
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
+
+На HFM правила маршрутизации сбрасываются. Добавить в /etc/rc.local или crontab @reboot.
