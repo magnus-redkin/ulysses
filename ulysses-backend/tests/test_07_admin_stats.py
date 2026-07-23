@@ -5,6 +5,9 @@
 import asyncio
 import sys
 from pathlib import Path
+from sqlalchemy import text
+from app.database import AsyncSessionLocal
+import uuid as uuid_lib
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -32,9 +35,44 @@ async def test_admin_stats():
 
         # 2. Создаем 3 тестовых пользователей
         print(f"\n📝 Шаг 2: Создаем 3 тестовых пользователей...")
+
+        # 🌟 ИСПРАВЛЕНИЕ: Массовая предварительная регистрация паспортов в СУБД до вызова bot/action
+        async with AsyncSessionLocal() as session:
+            try:
+                for i in range(3):
+                    tg_id = 100000000 + i
+                    sql_init_user = """
+                        INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, created_at, updated_at)
+                        VALUES (:tg_id, :username, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """
+                    await session.execute(text(sql_init_user), {
+                        "tg_id": tg_id,
+                        "username": f"test_stat_{i}",
+                        "uuid": str(uuid_lib.uuid4())
+                    })
+                await session.commit()
+                print("   • Входные паспорта пользователей успешно инициализированы в БД.")
+            except Exception as db_err:
+                await session.rollback()
+                print(f"   ❌ Ошибка при массовой инициализации в БД: {db_err}")
+                return False
+
+        # Теперь вызываем логику создания подписок для уже существующих в БД пользователей
         for i in range(3):
             tg_id = 100000000 + i
             await create_user_tg(tg_id, f"test_stat_{i}", "sub_free")
+
+            # Адаптация под логику триалов (как в тесте 05): пушим в active, если бэкенд оставляет в provisioning
+            async with AsyncSessionLocal() as session:
+                sql_activate = """
+                    UPDATE subscriptions
+                    SET status = 'active', starts_at = CURRENT_TIMESTAMP,
+                        expires_at = CURRENT_TIMESTAMP + INTERVAL '3 days', activated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = (SELECT id FROM users WHERE tg_user_id = :tg_id)
+                """
+                await session.execute(text(sql_activate), {"tg_id": tg_id})
+                await session.commit()
+
         await asyncio.sleep(3)
         print(f"   ✅ Созданы")
 
@@ -48,7 +86,7 @@ async def test_admin_stats():
         # 4. Проверка аномалий
         print(f"\n🔍 Шаг 4: Проверка системы (check)...")
         anomalies = await check_anomalies()
-        summary = anomalies.get('summary', {})
+        summary = anomalies.get('summary', {}) if anomalies else {}
         print(f"   • Грязных инвойсов: {summary.get('dirty_invoices_count', 0)}")
         print(f"   • Аномалий профилей: {summary.get('hiddify_anomalies_count', 0)}")
 
@@ -84,4 +122,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    # Если main() вернул True -> exit(0), если False -> exit(1)
+    sys.exit(0 if asyncio.run(main()) else 1)

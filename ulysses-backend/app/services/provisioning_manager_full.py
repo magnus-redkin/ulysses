@@ -28,15 +28,6 @@ class ProvisioningManager:
         self.db = db
         self.provisioner = HiddifyProvisioner()
 
-        tariffs_path = Path(__file__).parent.parent / "tariffs.json"
-        try:
-            with open(tariffs_path, "r", encoding="utf-8") as f:
-                self.tariffs = json.load(f)
-        except Exception as e:
-            logger.error(f"❌ Ошибка чтения тарифов: {e}")
-            return False
-
-
     async def provision_subscription(self, subscription_id: int) -> bool:
         """Синхронизация подписки с удаленной панелью VPN и перевод в active."""
         logger.info(f"⚙️ Запуск синхронизации подписки #{subscription_id}")
@@ -180,128 +171,139 @@ async def _action_check_balance(tg_user_id: int, data: dict, db: AsyncSession, b
 # ЧАСТЬ 3: АКТИВАЦИЯ И ПОКУПКА ТАРИФОВ
 # ============================================================
 
+# Внутри ulysses-backend/app/services/provisioning_manager.py
+
 async def _action_buy_tariff(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
     """
-    💰 ИСПРАВЛЕННЫЙ МУЛЬТИВАЛЮТНЫЙ ОБРАБОТЧИК КЛИКА ПО ТАРИФУ
-    Интегрирует Platega.io: разделяет бесплатный триал и мультивалютные инвойсы.
+    Универсальный обработчик экшена покупки и активации тарифов.
+    Разделяет вызов тарифной сетки и непосредственную транзакцию активации услуг.
+    Бронебойно извлекает параметры из JSON-пакета любой вложенности.
     """
-    tariff_slug = data.get("tariff_slug", "sub_1m").lower().strip()
-    # 🟢 Считываем ISO-код валюты, который прислал нам обновленный ТГ-бот
-    chosen_currency = data.get("currency", "RUB").upper().strip()
+    if not isinstance(data, dict):
+        data = {}
 
-    logger.info(f"🛒 [MANAGER] Запрос на покупку: TG={tg_user_id} | Тариф={tariff_slug} | Валюта={chosen_currency}")
+    payload = data.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
 
-    # 1. Считываем параметры тарифа из tariffs.json
-    manager = ProvisioningManager(db)
-    tariff_config = manager.tariffs.get(tariff_slug)
+    # 🔍 МНОГОУРОВНЕВЫЙ СБОР ПАРАМЕТРОВ: ищем слаг тарифа во всех возможных секциях JSON
+    tariff_slug = data.get("tariff_slug") or payload.get("tariff_slug") or data.get("action")
 
-    if not tariff_config:
+    # Если в качестве слага по ошибке прилетело общее имя экшена, сбрасываем его
+    if tariff_slug == "buy_tariff":
+        tariff_slug = None
+
+    # Если слаг прилетел в коротком формате кнопки бота (t_free, t_1m), восстанавливаем в sub_free/sub_1m
+    if tariff_slug and tariff_slug.startswith("t_"):
+        short_name = tariff_slug.replace("t_", "")
+        tariff_slug = short_name if short_name.startswith("sub_") else f"sub_{short_name}"
+
+    tg_username = payload.get("tg_username") or data.get("tg_username") or "unknown"
+
+    # 🌟 ШАГ 1: Если после всех проверок слага нет — это 100% первичный вызов меню.
+    # Вместо ошибки 400 Bad Request возвращаем команду переключения на экран тарифов.
+    if not tariff_slug:
+        logger.info(f"🛒 Пользователь TG {tg_user_id} открыл интерактивное меню тарифов")
+        return {
+            "state": "tariffs",
+            "message": "🛒 Выберите подходящий тарифный план для старта Ulysses VPN:",
+            "keyboard": "tariffs"
+        }
+
+    logger.info(f"💰 [БЭКЕНД] Запуск транзакции активации тарифа '{tariff_slug}' для TG {tg_user_id} (@{tg_username})")
+
+    # 🌟 ШАГ 2: Извлекаем локальный ID пользователя по его Telegram ID
+    user_res = await db.execute(
+        text("SELECT id, hiddify_uuid FROM users WHERE tg_user_id = :tg_id"),
+        {"tg_id": tg_user_id}
+    )
+    user_row = user_res.fetchone()
+    if not user_row:
+        logger.error(f"❌ Сбой активации: Пользователь TG {tg_user_id} не найден в СУБД!")
         return {
             "state": "error",
-            "message": f"⚠️ <b>Ошибка:</b> Тарифный план <code>{tariff_slug}</code> не найден в конфигурации.",
+            "message": "⚠️ <b>Профиль не найден.</b>\n\nОтправьте команду /start для повторной инициализации аккаунта.",
             "keyboard": "back"
         }
 
-    amount = float(tariff_config.get("price", 199.00))
+    user_internal_id, hiddify_uuid_str = user_row
 
-    # -----------------------------------------------------------------
-    # РЕЖИМ А: БЕСПЛАТНЫЙ ТАРИФ (Мгновенная автоактивация)
-    # -----------------------------------------------------------------
-    if tariff_slug == "sub_free" or amount == 0.00:
-        logger.info(f"🎁 [MANAGER] Выдача бесплатного триала для TG={tg_user_id}...")
-
-        # Проверяем, не брал ли юзер триал ранее, чтобы исключить злоупотребления
-        res_check = await db.execute(text("""
-            SELECT s.id FROM subscriptions s
-            JOIN users u ON s.user_id = u.id
-            WHERE u.tg_user_id = :tg_id AND s.tariff_slug = 'sub_free'
-        """), {"tg_id": tg_user_id})
-
-        if res_check.fetchone():
+    # 🌟 ШАГ 3: Если пользователь запрашивает бесплатный триал ('sub_free'),
+    # проверяем историю подписок, чтобы исключить повторную халяву.
+    if tariff_slug == "sub_free":
+        check_history_sql = """
+            SELECT id FROM subscriptions
+            WHERE user_id = :uid AND tariff_slug = 'sub_free' AND status != 'cancelled'
+            LIMIT 1
+        """
+        history_res = await db.execute(text(check_history_sql), {"uid": user_internal_id})
+        if history_res.fetchone():
+            logger.warning(f"🚫 Блокировка: Пользователь TG {tg_user_id} пытается повторно получить тариф Free!")
             return {
                 "state": "error",
-                "message": "⚠️ <b>Вы уже использовали бесплатный тест-драйв!</b>\n\nПожалуйста, выберите любой платный тарифный план для продления подписки Ulysses VPN.",
-                "keyboard": "tariffs"
+                "message": "⚠️ <b>Бесплатный период уже был активирован ранее!</b>\n\nПовторная выдача тестового тарифа заблокирована системой биллинга. Пожалуйста, выберите платный тарифный план.",
+                "keyboard": "back"
             }
 
-        # Логика выдачи триала через фоновый воркер (как у вас и было настроено)
-        from app.tasks.workers import provision_and_notify
-        # (Здесь идет ваш существующий код создания бесплатной записи в subscriptions)
+    # 🌟 ШАГ 4: Формируем сроки подписки (для триала даем 3 дня, для коммерческих — 30 дней)
+    now = datetime.now(timezone.utc)
+    days_to_add = 3 if tariff_slug == "sub_free" else 30
+    expires_at = now + timedelta(days=days_to_add)
 
-        return {
-            "state": "info",
-            "message": "🎁 <b>Запрос успешно принят в обработку!</b>\n\n⚙️ Наш кластер настраивает ваш триал на 3 дня...",
-            "keyboard": "back"
-        }
-
-    # -----------------------------------------------------------------
-    # РЕЖИМ Б: ПЛАТНЫЕ ТАРИФЫ (Генерация мультивалютных ссылок через Platega SDK)
-    # -----------------------------------------------------------------
-    from app.private.platega_service import PlategaPaymentService
-    from app.private.platega import Platega
-
-    # 1. Генерируем UUID и записываем инвойс в СУБД в статусе 'pending'
-    attempt_id = str(uuid_lib.uuid4())
-
-    sql_invoice = """
-        INSERT INTO payment_attempts (id, user_id, tariff_slug, amount, currency, status, created_at, updated_at, email)
-        VALUES (:id, (SELECT id FROM users WHERE tg_user_id = :tg_id), :tariff, :amount, :currency, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'tg_bot@ulysses.internal')
+    # 🌟 ШАГ 5: Фиксируем подписку в базе данных со стартовым статусом 'provisioning'
+    sql_insert_sub = """
+        INSERT INTO subscriptions (
+            user_id, tariff_slug, status, node_id, starts_at, expires_at,
+            created_at, updated_at, provisioning_attempts, provisioning_error
+        )
+        VALUES (
+            :uid, :tariff, 'provisioning', 'main', :starts, :expires,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL
+        )
+        RETURNING id
     """
     try:
-        await db.execute(text(sql_invoice), {
-            "id": attempt_id, "tg_id": tg_user_id, "tariff": tariff_slug, "amount": amount, "currency": chosen_currency
+        sub_res = await db.execute(text(sql_insert_sub), {
+            "uid": user_internal_id,
+            "tariff": tariff_slug,
+            "starts": now,
+            "expires": expires_at
         })
+        new_subscription_id = sub_res.scalar_one()
         await db.commit()
+        logger.info(f"💾 Подписка #{new_subscription_id} успешно создана в PostgreSQL. Запуск конвейера провижна...")
     except Exception as db_err:
-        logger.error(f"❌ [MANAGER] Ошибка записи инвойса в СУБД: {db_err}")
-        return {"state": "error", "message": "⚠️ Локальный сбой базы данных биллинга.", "keyboard": "back"}
-
-    # 2. Вычисляем метод Platega на основе выбранного направления
-    # СБП (2) для RUB, Крипта (13) для USDT, Международные карты (12) для USD/EUR
-    pay_method = Platega.METHOD_SBP_QR
-    if chosen_currency == "USDT":
-        pay_method = Platega.METHOD_CRYPTO
-    elif chosen_currency in ("USD", "EUR"):
-        pay_method = Platega.METHOD_INTERNATIONAL
-
-    # 3. Вызываем асинхронный сервис Platega (внутри пула потоков asyncio.to_thread)
-    pay_service = PlategaPaymentService()
-    invoice_data = await pay_service.create_invoice_link(
-        amount=amount,
-        currency=chosen_currency,
-        attempt_id=attempt_id,
-        tariff_name=tariff_slug,
-        method=pay_method
-    )
-
-    if invoice_data and "redirect" in invoice_data:
-        pay_url = invoice_data["redirect"]
-
-        # Название тарифа на русском для красивого вывода
-        tariff_ru_name = manager.tariffs[tariff_slug].get("name_ru", tariff_slug)
-
-        msg_text = (
-            f"💳 <b>Счёт на оплату успешно сформирован!</b>\n\n"
-            f"• 📋 <b>Тариф:</b> {tariff_ru_name}\n"
-            f"• 💰 <b>К оплате:</b> <code>{amount} {chosen_currency}</code>\n\n"
-            f"Для завершения активации нажмите на кнопку ниже и оплатите счёт в защищенном окне эквайринга **Platega.io**.\n\n"
-            f"🔗 <a href='{pay_url}'><b>НАЖМИТЕ ТУТ ДЛЯ ПЕРЕХОДА К ОПЛАТЕ</b></a>\n\n"
-            f"<i>После подтверждения платежа банком, конфигурационная карточка доступа прилетит в этот чат автоматически!</i>"
-        )
-        return {
-            "state": "payment_pending",
-            "message": msg_text,
-            "keyboard": "back"
-        }
-    else:
-        logger.error(f"❌ [MANAGER] Агрегатор Platega отклонил генерацию инвойса для {attempt_id}")
+        await db.rollback()
+        logger.error(f"❌ Ошибка записи подписки в PostgreSQL: {db_err}")
         return {
             "state": "error",
-            "message": "⚠️ <b>Провайдер платежей Platega временно недоступен.</b>\n\nПожалуйста, попробуйте повторить запрос через минуту.",
+            "message": "⚠️ <b>Ошибка СУБД при оформлении подписки.</b>\n\nПожалуйста, попробуйте позже.",
             "keyboard": "back"
         }
 
+    # 🌟 ШАГ 6: Передаем тяжелую задачу связи с нодой Hiddify v2 и отправки ссылки
+    # в изолированный асинхронный воркер, полностью защищая UI бота от фризов.
+    from app.tasks.workers import provision_and_notify
+    background_tasks.add_task(
+        provision_and_notify,
+        subscription_id=new_subscription_id,
+        tg_user_id=tg_user_id,
+        hiddify_uuid=str(hiddify_uuid_str),
+        expires_at=expires_at
+    )
 
+    # Возвращаем мгновенный промежуточный ответ, переключая интерфейс в режим ожидания
+    return {
+        "state": "info",
+        "message": (
+            "🎁 <b>Запрос успешно принят в обработку!</b>\n\n"
+            "⚙️ Наш кластер настраивает ваш персональный защищённый туннель на ноде...\n\n"
+            "<i>Пожалуйста, подождите несколько секунд. Конфигурационная карточка со ссылкой подключения автоматически прилетит в этот чат!</i>"
+        ),
+        "keyboard": "back"
+    }
+
+# Добавьте в ulysses-backend/app/services/provisioning_manager.py:
 
 async def _action_start_registration(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
     """🌟 МЯГКАЯ РЕГИСТРАЦИЯ: Гарантирует наличие пользователя в БД при вызове /start."""

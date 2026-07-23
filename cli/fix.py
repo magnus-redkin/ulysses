@@ -13,7 +13,6 @@ from rich.console import Console
 console = Console()
 BACKEND_API_URL = "http://127.0.0.1:8000"
 
-# Оставьте в начале cli/fix.py только базовые настройки:
 CONTEXT_SETTINGS = dict(
     help_option_names=['-h', '--help'],
     max_content_width=120
@@ -27,7 +26,6 @@ def fix():
     """
     pass
 
-# Переопределяем отображение имени группы в подсказках хелпа нижнего уровня
 fix.get_usage = lambda ctx: "uadmin fix [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
@@ -67,9 +65,10 @@ def fix_pending(force):
 
             try:
                 async with AsyncSessionLocal() as session:
+                    # 🟢 ИСПРАВЛЕНО: Заменен NOW() на CURRENT_TIMESTAMP для строгого соответствия TZ схемы
                     sql = """
                         UPDATE subscriptions
-                        SET provisioning_attempts = 0, provisioning_error = NULL, updated_at = NOW()
+                        SET provisioning_attempts = 0, provisioning_error = NULL, updated_at = CURRENT_TIMESTAMP
                         WHERE status = 'provisioning'
                     """
                     result = await session.execute(text(sql))
@@ -79,7 +78,7 @@ def fix_pending(force):
                 console.print(f"[red]❌ Ошибка при сбросе счетчиков в БД: {db_err}[/red]")
                 return
 
-        console.print("[yellow]⏳ Попытка повторной активации зависших подписок через API...[/yellow]")
+        console.print("[yellow]⏳ Попытка повторной активации зависших подписок через API бэкенда...[/yellow]")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(f"{BACKEND_API_URL}/api/admin/fix/process-pending")
@@ -130,7 +129,9 @@ def fix_retry(subscription_id: int):
 
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get("status") == "activated":
+                    # 🟢 ИСПРАВЛЕНО: Безопасное приведение к строке при проверке статуса бэкенда
+                    status_val = str(data.get("status", "")).lower()
+                    if status_val in ("activated", "success", "active"):
                         console.print(f"[green]✅ Успешно: Подписка #[bold]{subscription_id}[/bold] активирована в Hiddify![/green]")
                     else:
                         console.print(f"[yellow]⚠️ Бэкенд вернул статус: {data}[/yellow]")

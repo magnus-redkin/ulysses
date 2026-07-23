@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     AEZA_NUMBER: str = ""
     AEZA_API_KEY: str = ""
 
+    PLATEGA_MERCHANT_ID: str = "default-merchant-id"
+    PLATEGA_API: str = "default-api-key"
+
+
     DECOY_SITE: str = ""
 
     @property
@@ -75,6 +79,9 @@ class Settings(BaseSettings):
     class Config:
         extra = "allow"  # Разрешаем дополнительные переменные из .env
         case_sensitive = False
+        env_file = ".env"
+        # extra = "ignore" # Позволяет Pydantic не падать, если в .env есть другие переменные
+
 
 settings = Settings()
 

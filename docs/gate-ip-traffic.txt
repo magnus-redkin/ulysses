@@ -1,21 +1,49 @@
-# Настройка выхода трафика через гейт (2ip.ru показывает IP гейта)
-
-## Архитектура
-
-Клиент → Гейт (HAProxy) → HFM (Xray Reality) → WireGuard → Гейт (NAT) → Интернет
-
-Гейт: 62.60.249.53 (основной), 109.120.184.174, 83.147.216.201
-HFM:  45.131.215.185
-
-WireGuard сеть: 10.90.0.0/24
-HFM в WireGuard: 10.90.0.1
-Гейт в WireGuard: 10.90.0.3
+# Настройка multi-gate маршрутизации через SOCKS5
+# Архитектура: Клиент → Гейт (HAProxy + send-proxy) → HFM (Xray) → SOCKS5 → Гейт → Интернет
+# Дата актуализации: 22.07.2026
 
 ---
 
-## Часть 1: Гейт
+## Архитектура
 
-### 1. HAProxy (проброс трафика на HFM)
+Три независимых гейта, каждый со своей страной выхода:
+
+G-1 (Финляндия): 62.60.249.53, 109.120.184.174, 83.147.216.201
+G-2 (Швеция):    138.124.25.80
+G-3 (Москва):    45.151.102.125, 77.221.151.75
+
+HFM (ядро):      45.131.215.185
+
+Трафик клиента заходит на гейт, HAProxy пробрасывает на HFM через WireGuard-туннель
+с PROXY Protocol. HFM (Xray) маршрутизирует трафик обратно через SOCKS5 на тот же гейт,
+с которого пришёл клиент. Гейт выпускает трафик в интернет через NAT.
+
+Схема:
+Клиент → G-X:443 (HAProxy send-proxy) → WG → HFM:4430X (Xray inbound gate-gX)
+  → Xray routing (inbound gate-gX → outbound socks-gX)
+  → SOCKS5 через WG → G-X:1080 (dante-server) → NAT → Интернет
+
+WireGuard сеть: 10.90.0.0/16
+HFM в WireGuard: 10.90.0.1
+G-1 в WireGuard: 10.90.0.3
+G-2 в WireGuard: 10.90.0.4
+G-3 в WireGuard: 10.90.0.5
+
+IP-алиасы на HFM (hiddifywg):
+10.90.0.11 → G-1
+10.90.0.12 → G-2
+10.90.0.13 → G-3
+
+Порты Xray на HFM:
+44301 → G-1
+44302 → G-2
+44303 → G-3
+
+---
+
+## Часть 1: Гейт (на примере G-1, для G-2/G-3 аналогично)
+
+### 1. HAProxy с send-proxy
 
 Файл: /etc/haproxy/haproxy.cfg
 
@@ -24,7 +52,9 @@ frontend https_in
     default_backend https_to_heart
 
 backend https_to_heart
-    server heart 45.131.215.185:443 maxconn 25000
+    server heart 10.90.0.11:44301 maxconn 25000 send-proxy
+    # G-2: server heart 10.90.0.12:44302 maxconn 25000 send-proxy
+    # G-3: server heart 10.90.0.13:44303 maxconn 25000 send-proxy
 
 ### 2. WireGuard (туннель к HFM)
 
@@ -33,13 +63,13 @@ backend https_to_heart
 Файл: /etc/wireguard/wg0.conf
 
 [Interface]
-Address = 10.90.0.3/24
+Address = 10.90.0.3/32
 PrivateKey = 8MOBhOuqGgfIuhOLDtzr344cvcuJODF7hdub2V6kBWw=
 
 [Peer]
 PublicKey = zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
 Endpoint = 45.131.215.185:33712
-AllowedIPs = 10.90.0.0/24
+AllowedIPs = 10.90.0.0/16
 PersistentKeepalive = 25
 
 Запуск:
@@ -50,68 +80,914 @@ sudo systemctl enable wg-quick@wg0
 
 sudo sysctl -w net.ipv4.ip_forward=1
 echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/24 -o enp0s3 -j MASQUERADE
+sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/16 -o enp0s3 -j MASQUERADE
+sudo iptables -A FORWARD -i wg0 -j ACCEPT
+sudo iptables -A FORWARD -o wg0 -j ACCEPT
+
+Сохранить iptables:
+sudo apt install -y iptables-persistent
+sudo netfilter-persistent save
+
+### 4. SOCKS5 прокси (dante-server)
+
+Установка: sudo apt install -y dante-server
+
+Файл: /etc/danted.conf
+
+logoutput: syslog
+internal: 0.0.0.0 port = 1080
+external: enp0s3
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+socks pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+
+Запуск:
+sudo systemctl restart danted
+sudo systemctl enable danted
 
 ---
 
-## Часть 2: HFM
+## Часть 2: HFM (Hiddify Manager)
 
-### 1. WireGuard (туннель к гейту)
+### 1. WireGuard (туннель ко всем гейтам)
 
 Файл: /etc/wireguard/hiddifywg.conf
 
-В секции [Peer] добавить гейт:
+[Interface]
+Address = 10.90.0.1/16,fd42:42:90::1/90
+ListenPort = 33712
+PrivateKey = WFppp/dyCZp/O8LMFKxnkpD9qU2VDdgSP04/ieIXD3o=
+Table = off
 
-[Peer]
-PublicKey = VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
-AllowedIPs = 0.0.0.0/0
-
-В секции [Interface] добавить (чтобы не потерять SSH):
-
+PostUp = iptables -I INPUT -p udp --dport 33712 -j ACCEPT
+PostUp = iptables -I FORWARD -i enp0s3 -o hiddifywg -j ACCEPT
+PostUp = iptables -I FORWARD -i hiddifywg -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+PostUp = ip6tables -I FORWARD -i hiddifywg -j ACCEPT
+PostUp = ip6tables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
 PostUp = ip rule add from 45.131.215.185 table main priority 50
+
+PostDown = iptables -D INPUT -p udp --dport 33712 -j ACCEPT
+PostDown = iptables -D FORWARD -i enp0s3 -o hiddifywg -j ACCEPT
+PostDown = iptables -D FORWARD -i hiddifywg -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o enp0s3 -j MASQUERADE
+PostDown = ip6tables -D FORWARD -i hiddifywg -j ACCEPT
+PostDown = ip6tables -t nat -D POSTROUTING -o enp0s3 -j MASQUERADE
 PostDown = ip rule del from 45.131.215.185 table main priority 50
 
-Перезапуск:
-sudo wg-quick down hiddifywg && sudo wg-quick up hiddifywg
+[Peer]
+# G-1
+PublicKey = VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
+AllowedIPs = 10.90.0.3/32
 
-### 2. Маршрутизация трафика Xray через туннель
+[Peer]
+# G-2
+PublicKey = 4HOFiJd2eGd3m++vW/FCVqtdILdTXpK4jAHqCHuRYVA=
+AllowedIPs = 10.90.0.4/32
 
-sudo ip rule add from 10.90.0.1 table 100
-sudo ip route add default via 10.90.0.3 dev hiddifywg table 100
+[Peer]
+# G-3
+PublicKey = jU13PaISmj1iC5H7tNA1IYoGquODmowwTQOhwxMJ9zk=
+AllowedIPs = 10.90.0.5/32
 
-Проверка:
-curl --interface 10.90.0.1 ifconfig.me
-# Должен показать IP гейта
+Запуск:
+sudo wg-quick up hiddifywg
+
+### 2. IP-алиасы на hiddifywg
+
+При ребуте сбрасываются. Добавить в /etc/rc.local или crontab @reboot:
+
+ip addr add 10.90.0.11/32 dev hiddifywg
+ip addr add 10.90.0.12/32 dev hiddifywg
+ip addr add 10.90.0.13/32 dev hiddifywg
+
+### 3. Xray — inbound для каждого гейта
+
+Файлы в /opt/hiddify-manager/xray/configs/:
+
+05_inbounds_g1.json — inbound gate-g1 на 10.90.0.11:44301
+05_inbounds_g2.json — inbound gate-g2 на 10.90.0.12:44302
+05_inbounds_g3.json — inbound gate-g3 на 10.90.0.13:44303
+
+Все с "acceptProxyProtocol": true, "security": "reality",
+общие ключи Reality, path "/TZe1DA5Xmdguu8htyuGgnt",
+sni "dl.google.com".
+
+### 4. Xray — SOCKS5 outbound
+
+Файл: /opt/hiddify-manager/xray/configs/06_outbounds_socks.json
+
+Три outbound с тегами socks-g1, socks-g2, socks-g3,
+каждый указывает на SOCKS5 проксю своего гейта:
+- socks-g1 → 10.90.0.3:1080
+- socks-g2 → 10.90.0.4:1080
+- socks-g3 → 10.90.0.5:1080
+
+### 5. Xray — routing
+
+Файл: /opt/hiddify-manager/xray/configs/03_routing_gates.json
+
+Правила:
+- inbound gate-g1 → outbound socks-g1
+- inbound gate-g2 → outbound socks-g2
+- inbound gate-g3 → outbound socks-g3
+
+### 6. Перезапуск Xray
+
+sudo systemctl restart hiddify-xray
+sudo systemctl status hiddify-xray
 
 ---
 
 ## Часть 3: Клиент
 
-Ссылка формируется с server = IP гейта, остальное от HFM:
+Ссылка формируется с server = IP гейта:443, остальные параметры от HFM:
 
-vless://UUID@IP_ГЕЙТА:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&hiddify=1&encryption=none&core=xray&headerType=none
+G-1: vless://UUID@62.60.249.53:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
 
-Где UUID — актуальный UUID пользователя из HFM.
+G-2: vless://UUID@138.124.25.80:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
+
+G-3: vless://UUID@45.151.102.125:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
+
+UUID — актуальный UUID пользователя из HFM.
+
+Финальный клиентский конфиг (Sing-Box JSON с selector/urltest) генерирует Улисс.
+urltest включает только G-1 и G-2 (зарубежные). G-3 (Москва) — только ручной выбор.
 
 ---
 
-## Ключи WireGuard (для справки)
+## Ключи WireGuard
 
 HFM:
   Приватный: (в /etc/wireguard/hiddifywg.conf)
   Публичный: zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
 
-Гейт:
+G-1:
   Приватный: 8MOBhOuqGgfIuhOLDtzr344cvcuJODF7hdub2V6kBWw=
   Публичный: VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
+
+G-2:
+  Приватный: 8CaWwQVh553bs+ffSo1ZK4IweiIwCpYGBhWYIPhVn1Q=
+  Публичный: 4HOFiJd2eGd3m++vW/FCVqtdILdTXpK4jAHqCHuRYVA=
+
+G-3:
+  Приватный: iMekn159v5Lkh6ct/viVQwgp/qpsAeK8Ij3Ec+i1S34=
+  Публичный: jU13PaISmj1iC5H7tNA1IYoGquODmowwTQOhwxMJ9zk=
+
+---
+
+## Проверка
+
+На HFM:
+  curl --socks5 10.90.0.3:1080 ifconfig.me  # Должен показать IP G-1
+  curl --socks5 10.90.0.4:1080 ifconfig.me  # Должен показать IP G-2
+  curl --socks5 10.90.0.5:1080 ifconfig.me  # Должен показать IP G-3
+
+На гейтах:
+  nc -zv 10.90.0.11 44301  # G-1 → HFM
+  nc -zv 10.90.0.12 44302  # G-2 → HFM
+  nc -zv 10.90.0.13 44303  # G-3 → HFM
+
+Клиентом: подключиться к каждой vless-ссылке, проверить IP на 2ip.ru.
 
 ---
 
 ## Восстановление после ребута
 
-На гейте правила iptables сбрасываются. Сохранить:
+Гейты:
+  - WireGuard: sudo wg-quick up wg0 (автозапуск через systemctl enable wg-quick@wg0)
+  - HAProxy: автозапуск (systemctl enable haproxy)
+  - Dante: автозапуск (systemctl enable danted)
+  - iptables: сохранены через netfilter-persistent
 
+HFM:
+  - WireGuard: sudo wg-quick up hiddifywg
+  - IP-алиасы: добавить в /etc/rc.local
+  - Xray: автозапуск (hiddify-xray.service)
+
+---
+
+## Автоматизация (TODO)
+
+Планируется через агентов на HFM и гейтах под управлением Улисса.
+При добавлении/удалении гейта или смене IP:
+  - Улисс отправляет команду агенту
+  - Агент обновляет конфиги (HAProxy, Xray, Dante) и перезапускает сервисы
+
+# commands
+
+## Полный порядок настройки (пошагово)
+
+### Предварительные условия:
+- HFM (45.131.215.185) установлен и работает Hiddify Manager
+- Гейты G-1 (62.60.249.53), G-2 (138.124.25.80), G-3 (45.151.102.125) с Ubuntu/Debian
+- На всех серверах sudo-доступ
+
+---
+
+### ЭТАП 1: Настройка WireGuard на HFM
+
+#### 1.1 Создать конфиг
+sudo tee /etc/wireguard/hiddifywg.conf << 'EOF'
+[Interface]
+Address = 10.90.0.1/16,fd42:42:90::1/90
+ListenPort = 33712
+PrivateKey = WFppp/dyCZp/O8LMFKxnkpD9qU2VDdgSP04/ieIXD3o=
+Table = off
+
+PostUp = iptables -I INPUT -p udp --dport 33712 -j ACCEPT
+PostUp = iptables -I FORWARD -i enp0s3 -o hiddifywg -j ACCEPT
+PostUp = iptables -I FORWARD -i hiddifywg -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+PostUp = ip6tables -I FORWARD -i hiddifywg -j ACCEPT
+PostUp = ip6tables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+PostUp = ip rule add from 45.131.215.185 table main priority 50
+
+PostDown = iptables -D INPUT -p udp --dport 33712 -j ACCEPT
+PostDown = iptables -D FORWARD -i enp0s3 -o hiddifywg -j ACCEPT
+PostDown = iptables -D FORWARD -i hiddifywg -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o enp0s3 -j MASQUERADE
+PostDown = ip6tables -D FORWARD -i hiddifywg -j ACCEPT
+PostDown = ip6tables -t nat -D POSTROUTING -o enp0s3 -j MASQUERADE
+PostDown = ip rule del from 45.131.215.185 table main priority 50
+
+[Peer]
+# G-1
+PublicKey = VkpJ9uQsEvja7mPYppgpsLcGvzGnt1RnCAGUudmeYx8=
+AllowedIPs = 10.90.0.3/32
+
+[Peer]
+# G-2
+PublicKey = 4HOFiJd2eGd3m++vW/FCVqtdILdTXpK4jAHqCHuRYVA=
+AllowedIPs = 10.90.0.4/32
+
+[Peer]
+# G-3
+PublicKey = jU13PaISmj1iC5H7tNA1IYoGquODmowwTQOhwxMJ9zk=
+AllowedIPs = 10.90.0.5/32
+EOF
+
+#### 1.2 Запустить WireGuard
+sudo wg-quick up hiddifywg
+
+#### 1.3 Проверить
+sudo wg show
+# Должны быть три пира, но handshake пока нет (гейты ещё не настроены)
+
+
+### ЭТАП 2: Настройка гейтов (G-1, G-2, G-3)
+
+Каждый блок выполнить на соответствующем гейте.
+
+---
+
+#### 2.1 G-1 (Финляндия)
+
+##### WireGuard
+sudo apt install -y wireguard
+
+sudo tee /etc/wireguard/wg0.conf << 'EOF'
+[Interface]
+Address = 10.90.0.3/32
+PrivateKey = 8MOBhOuqGgfIuhOLDtzr344cvcuJODF7hdub2V6kBWw=
+
+[Peer]
+PublicKey = zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
+Endpoint = 45.131.215.185:33712
+AllowedIPs = 10.90.0.0/16
+PersistentKeepalive = 25
+EOF
+
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
+
+##### NAT и форвардинг
+sudo sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/16 -o enp0s3 -j MASQUERADE
+sudo iptables -A FORWARD -i wg0 -j ACCEPT
+sudo iptables -A FORWARD -o wg0 -j ACCEPT
 sudo apt install -y iptables-persistent
-sudo iptables-save | sudo tee /etc/iptables/rules.v4
+sudo netfilter-persistent save
 
-На HFM правила маршрутизации сбрасываются. Добавить в /etc/rc.local или crontab @reboot.
+##### HAProxy
+sudo apt install -y haproxy
+
+sudo tee /etc/haproxy/haproxy.cfg << 'EOF'
+global
+    log /dev/log local0
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    maxconn 50000
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client  2h
+    timeout server  2h
+
+frontend https_in
+    bind *:443
+    default_backend https_to_heart
+
+backend https_to_heart
+    server heart 10.90.0.11:44301 maxconn 25000 send-proxy
+EOF
+
+sudo systemctl restart haproxy
+sudo systemctl enable haproxy
+
+##### SOCKS5 (Dante)
+sudo apt install -y dante-server
+
+sudo tee /etc/danted.conf << 'EOF'
+logoutput: syslog
+internal: 0.0.0.0 port = 1080
+external: enp0s3
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+socks pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+EOF
+
+sudo systemctl restart danted
+sudo systemctl enable danted
+
+##### Проверка на G-1
+ping -c 2 10.90.0.1
+sudo wg show
+sudo systemctl status haproxy danted
+
+---
+
+#### 2.2 G-2 (Швеция)
+
+##### WireGuard
+sudo apt install -y wireguard
+
+sudo tee /etc/wireguard/wg0.conf << 'EOF'
+[Interface]
+Address = 10.90.0.4/32
+PrivateKey = 8CaWwQVh553bs+ffSo1ZK4IweiIwCpYGBhWYIPhVn1Q=
+
+[Peer]
+PublicKey = zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
+Endpoint = 45.131.215.185:33712
+AllowedIPs = 10.90.0.0/16
+PersistentKeepalive = 25
+EOF
+
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
+
+##### NAT и форвардинг
+sudo sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/16 -o enp0s3 -j MASQUERADE
+sudo iptables -A FORWARD -i wg0 -j ACCEPT
+sudo iptables -A FORWARD -o wg0 -j ACCEPT
+sudo apt install -y iptables-persistent
+sudo netfilter-persistent save
+
+##### HAProxy
+sudo apt install -y haproxy
+
+sudo tee /etc/haproxy/haproxy.cfg << 'EOF'
+global
+    log /dev/log local0
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    maxconn 50000
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client  2h
+    timeout server  2h
+
+frontend https_in
+    bind *:443
+    default_backend https_to_heart
+
+backend https_to_heart
+    server heart 10.90.0.12:44302 maxconn 25000 send-proxy
+EOF
+
+sudo systemctl restart haproxy
+sudo systemctl enable haproxy
+
+##### SOCKS5 (Dante)
+sudo apt install -y dante-server
+
+sudo tee /etc/danted.conf << 'EOF'
+logoutput: syslog
+internal: 0.0.0.0 port = 1080
+external: enp0s3
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+socks pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+EOF
+
+sudo systemctl restart danted
+sudo systemctl enable danted
+
+##### Проверка на G-2
+ping -c 2 10.90.0.1
+sudo wg show
+sudo systemctl status haproxy danted
+
+---
+
+#### 2.3 G-3 (Москва)
+
+##### WireGuard
+sudo apt install -y wireguard
+
+sudo tee /etc/wireguard/wg0.conf << 'EOF'
+[Interface]
+Address = 10.90.0.5/32
+PrivateKey = iMekn159v5Lkh6ct/viVQwgp/qpsAeK8Ij3Ec+i1S34=
+
+[Peer]
+PublicKey = zypHFdXUZrM10Zdc9gO+da0uEhxwHdQWyQ03qt76wl8=
+Endpoint = 45.131.215.185:33712
+AllowedIPs = 10.90.0.0/16
+PersistentKeepalive = 25
+EOF
+
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
+
+##### NAT и форвардинг
+sudo sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo iptables -t nat -A POSTROUTING -s 10.90.0.0/16 -o enp0s3 -j MASQUERADE
+sudo iptables -A FORWARD -i wg0 -j ACCEPT
+sudo iptables -A FORWARD -o wg0 -j ACCEPT
+sudo apt install -y iptables-persistent
+sudo netfilter-persistent save
+
+##### HAProxy
+sudo apt install -y haproxy
+
+sudo tee /etc/haproxy/haproxy.cfg << 'EOF'
+global
+    log /dev/log local0
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    maxconn 50000
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client  2h
+    timeout server  2h
+
+frontend https_in
+    bind *:443
+    default_backend https_to_heart
+
+backend https_to_heart
+    server heart 10.90.0.13:44303 maxconn 25000 send-proxy
+EOF
+
+sudo systemctl restart haproxy
+sudo systemctl enable haproxy
+
+##### SOCKS5 (Dante)
+sudo apt install -y dante-server
+
+sudo tee /etc/danted.conf << 'EOF'
+logoutput: syslog
+internal: 0.0.0.0 port = 1080
+external: enp0s3
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+socks pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}
+EOF
+
+sudo systemctl restart danted
+sudo systemctl enable danted
+
+##### Проверка на G-3
+ping -c 2 10.90.0.1
+sudo wg show
+sudo systemctl status haproxy danted
+
+
+### ЭТАП 3: Проверка WireGuard после настройки гейтов
+
+#### На HFM
+sudo wg show
+# Должны быть три активных пира с handshake
+
+ping -c 2 10.90.0.3
+ping -c 2 10.90.0.4
+ping -c 2 10.90.0.5
+
+
+### ЭТАП 4: Настройка IP-алиасов на HFM
+
+sudo ip addr add 10.90.0.11/32 dev hiddifywg
+sudo ip addr add 10.90.0.12/32 dev hiddifywg
+sudo ip addr add 10.90.0.13/32 dev hiddifywg
+
+# Проверить
+ip addr show hiddifywg | grep 10.90
+
+
+### ЭТАП 5: Настройка Xray inbound на HFM
+
+#### 5.1 G-1 inbound
+sudo tee /opt/hiddify-manager/xray/configs/05_inbounds_g1.json << 'EOF'
+{
+  "inbounds": [
+    {
+      "tag": "gate-g1",
+      "port": 44301,
+      "listen": "10.90.0.11",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5",
+            "email": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5@hiddify.com",
+            "flow": ""
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "dest": "@@http_in_h2",
+            "xver": 2
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "auto",
+          "path": "/TZe1DA5Xmdguu8htyuGgnt"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "dl.google.com:443",
+          "xver": 0,
+          "serverNames": ["dl.google.com"],
+          "privateKey": "GE-dHLt0716so6XhMJTAJKXrB--a6MxJ8fjClhmPMng",
+          "shortIds": ["", "0a3f9c1d7b2e4a0f"]
+        },
+        "sockopt": {
+          "acceptProxyProtocol": true,
+          "tcpFastOpen": true
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      }
+    }
+  ]
+}
+EOF
+
+#### 5.2 G-2 inbound
+sudo tee /opt/hiddify-manager/xray/configs/05_inbounds_g2.json << 'EOF'
+{
+  "inbounds": [
+    {
+      "tag": "gate-g2",
+      "port": 44302,
+      "listen": "10.90.0.12",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5",
+            "email": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5@hiddify.com",
+            "flow": ""
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "dest": "@@http_in_h2",
+            "xver": 2
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "auto",
+          "path": "/TZe1DA5Xmdguu8htyuGgnt"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "dl.google.com:443",
+          "xver": 0,
+          "serverNames": ["dl.google.com"],
+          "privateKey": "GE-dHLt0716so6XhMJTAJKXrB--a6MxJ8fjClhmPMng",
+          "shortIds": ["", "0a3f9c1d7b2e4a0f"]
+        },
+        "sockopt": {
+          "acceptProxyProtocol": true,
+          "tcpFastOpen": true
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      }
+    }
+  ]
+}
+EOF
+
+#### 5.3 G-3 inbound
+sudo tee /opt/hiddify-manager/xray/configs/05_inbounds_g3.json << 'EOF'
+{
+  "inbounds": [
+    {
+      "tag": "gate-g3",
+      "port": 44303,
+      "listen": "10.90.0.13",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5",
+            "email": "609eb314-0c06-42e1-a9c4-4402d2d1d7d5@hiddify.com",
+            "flow": ""
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "dest": "@@http_in_h2",
+            "xver": 2
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "auto",
+          "path": "/TZe1DA5Xmdguu8htyuGgnt"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "dl.google.com:443",
+          "xver": 0,
+          "serverNames": ["dl.google.com"],
+          "privateKey": "GE-dHLt0716so6XhMJTAJKXrB--a6MxJ8fjClhmPMng",
+          "shortIds": ["", "0a3f9c1d7b2e4a0f"]
+        },
+        "sockopt": {
+          "acceptProxyProtocol": true,
+          "tcpFastOpen": true
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      }
+    }
+  ]
+}
+EOF
+
+
+### ЭТАП 6: Настройка SOCKS5 outbound в Xray на HFM
+
+sudo tee /opt/hiddify-manager/xray/configs/06_outbounds_socks.json << 'EOF'
+{
+  "outbounds": [
+    {
+      "tag": "socks-g1",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "10.90.0.3",
+            "port": 1080
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-g2",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "10.90.0.4",
+            "port": 1080
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-g3",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "10.90.0.5",
+            "port": 1080
+          }
+        ]
+      }
+    }
+  ]
+}
+EOF
+
+
+### ЭТАП 7: Настройка routing в Xray на HFM
+
+sudo tee /opt/hiddify-manager/xray/configs/03_routing_gates.json << 'EOF'
+{
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["gate-g1"],
+        "outboundTag": "socks-g1"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["gate-g2"],
+        "outboundTag": "socks-g2"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["gate-g3"],
+        "outboundTag": "socks-g3"
+      }
+    ]
+  }
+}
+EOF
+
+
+### ЭТАП 8: Проверка и перезапуск Xray на HFM
+
+#### 8.1 Проверка конфигурации
+sudo /opt/hiddify-manager/xray/bin/xray run -test -confdir /opt/hiddify-manager/xray/configs/
+# Должно вывести "Configuration OK."
+
+#### 8.2 Перезапуск
+sudo systemctl restart hiddify-xray
+sudo systemctl status hiddify-xray
+
+#### 8.3 Проверить порты
+sudo ss -tlnp | grep -E "44301|44302|44303"
+# Должны быть LISTEN на 10.90.0.11:44301, 10.90.0.12:44302, 10.90.0.13:44303
+
+
+### ЭТАП 9: Проверка SOCKS с HFM
+
+curl --socks5 10.90.0.3:1080 ifconfig.me
+# Должен показать IP G-1 (83.147.216.201 или другой IP Финляндии)
+
+curl --socks5 10.90.0.4:1080 ifconfig.me
+# Должен показать IP G-2 (138.124.25.80)
+
+curl --socks5 10.90.0.5:1080 ifconfig.me
+# Должен показать IP G-3 (77.221.151.75)
+
+
+### ЭТАП 10: Проверка связности HAProxy → HFM
+
+# С любого гейта (например G-3):
+nc -zv 10.90.0.11 44301
+nc -zv 10.90.0.12 44302
+nc -zv 10.90.0.13 44303
+# Все должны показать "Connection succeeded"
+
+
+### ЭТАП 11: Тест с клиента
+
+Подключиться клиентом к каждой ссылке по очереди:
+
+# G-1 (Финляндия):
+vless://609eb314-0c06-42e1-a9c4-4402d2d1d7d5@62.60.249.53:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
+
+# G-2 (Швеция):
+vless://609eb314-0c06-42e1-a9c4-4402d2d1d7d5@138.124.25.80:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
+
+# G-3 (Москва):
+vless://609eb314-0c06-42e1-a9c4-4402d2d1d7d5@45.151.102.125:443?security=reality&type=xhttp&sni=dl.google.com&fp=chrome&pbk=HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE&sid=0a3f9c1d7b2e4a0f&path=%2FTZe1DA5Xmdguu8htyuGgnt&host=dl.google.com&alpn=http%2F1.1&encryption=none&core=xray&headerType=none
+
+Проверить IP на 2ip.ru для каждой:
+- G-1 → IP Финляндии
+- G-2 → IP Швеции
+- G-3 → IP Москвы
+
+
+### ЭТАП 12: Сохранение состояния после ребута
+
+#### 12.1 На HFM — IP-алиасы и автостарт
+
+sudo tee /etc/rc.local << 'RCLOCAL'
+#!/bin/bash
+ip addr add 10.90.0.11/32 dev hiddifywg 2>/dev/null
+ip addr add 10.90.0.12/32 dev hiddifywg 2>/dev/null
+ip addr add 10.90.0.13/32 dev hiddifywg 2>/dev/null
+exit 0
+RCLOCAL
+sudo chmod +x /etc/rc.local
+
+# Проверить автозапуск WireGuard
+sudo systemctl enable wg-quick@hiddifywg 2>/dev/null || echo "Добавить в crontab @reboot: wg-quick up hiddifywg"
+
+#### 12.2 На гейтах — всё уже сохранено
+# WireGuard: enable wg-quick@wg0
+# HAProxy: enable haproxy
+# Dante: enable danted
+# iptables: netfilter-persistent save (уже сделано)
+
+
+### ЭТАП 13: Отладка (если что-то не работает)
+
+#### Логи HAProxy на гейте:
+sudo tail -f /var/log/haproxy.log
+
+#### Логи Xray на HFM:
+sudo journalctl -u hiddify-xray -f
+
+#### Логи Dante на гейте:
+sudo journalctl -u danted -f
+
+#### Сниффинг трафика на HFM:
+sudo tcpdump -i hiddifywg port 44301 -nn
+
+#### Проверка соединений на HFM:
+sudo ss -tnp | grep -E "44301|44302|44303"
+
+#### Проверка правил iptables на HFM:
+sudo iptables -L INPUT -v -n
+sudo iptables -t nat -L POSTROUTING -v -n

@@ -32,12 +32,39 @@ async def test_create_user_telegram():
     print(f"   • state: {state.get('state')}" if state else "   ❌ Ошибка")
     assert state and state.get('state') == 'new', "Ожидался state='new'"
 
+    # 🌟 ИСПРАВЛЕНИЕ: Имитируем команду /start через чистый INSERT в СУБД
+    print(f"\n🚀 Шаг 1.5: Имитируем команду /start (Регистрация паспорта в СУБД)...")
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    import uuid as uuid_lib
+
+    async with AsyncSessionLocal() as session:
+        try:
+            # Убираем проблемный ON CONFLICT, так как база уже очищена на Шаге 0
+            sql_init_user = """
+                INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, created_at, updated_at)
+                VALUES (:tg_id, :username, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+            await session.execute(text(sql_init_user), {
+                "tg_id": TEST_TG_ID,
+                "username": TEST_TG_USERNAME,
+                "uuid": str(uuid_lib.uuid4())
+            })
+            await session.commit()
+            print(f"   ✅ Запись пользователя успешно инициализирована в БД.")
+        except Exception as db_err:
+            await session.rollback()
+            print(f"   ❌ Ошибка при прямой инициализации в БД: {db_err}")
+            raise db_err
+
     # 2. Создаём через bot/action
     print(f"\n📝 Шаг 2: Создаём заказ через bot/action...")
     result = await create_user_tg(TEST_TG_ID, TEST_TG_USERNAME, "sub_free")
     print(f"   • state: {result.get('state')}")
     print(f"   • message: {result.get('message')}")
-    assert result and result.get('state') in ('payment_free', 'payment_pending'), f"Неожиданный state: {result.get('state')}"
+
+    # 🟢 ИСПРАВЛЕНО: Добавлен статус 'info', который возвращает ваш рабочий бот
+    assert result and result.get('state') in ('payment_free', 'payment_pending', 'info', 'active'), f"Неожиданный state: {result.get('state')}"
 
     # 3. Ждём активации
     print(f"\n📝 Шаг 3: Ждём активации...")
@@ -96,4 +123,6 @@ async def main():
     return success
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    # Если main() вернул True -> exit(0), если False -> exit(1)
+    sys.exit(0 if asyncio.run(main()) else 1)

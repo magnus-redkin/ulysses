@@ -9,12 +9,12 @@
 <svelte:head>
   {#if locale.current === 'ru'}
     <title>Улисс VPN — Умный VPN с открытым исходным кодом</title>
-    <meta name="description" content="Улисс VPN — бесплатный умный VPN с открытым исходным кодом на базе Hiddify. Надежная защита VLESS, REALITY, gRPC и xHTTP без слежки и CloudFlare." />
+    <meta name="description" content="Улисс VPN — умный VPN с открытым исходным кодом на базе Hiddify. Надежная защита VLESS, REALITY, gRPC и xHTTP без слежки и CloudFlare." />
     <meta name="keywords" content="vpn с открытым исходным кодом, умный vpn, hiddify vpn, vless reality vpn, бесплатный впн, ulysses vpn" />
 
     <!-- Open Graph (Для красивого отображения ссылки в Telegram/VK) -->
     <meta property="og:title" content="Улисс VPN — Умный VPN с открытым исходным кодом" />
-    <meta property="og:description" content="Бесплатный умный VPN на базе Hiddify с открытым исходным кодом. Защита VLESS + REALITY." />
+    <meta property="og:description" content="умный VPN на базе Hiddify с открытым исходным кодом. Защита VLESS + REALITY." />
   {:else}
     <title>Ulysses VPN — Smart Open-Source VPN</title>
     <meta name="description" content="Ulysses VPN is a smart, open-source VPN powered by Hiddify. Secure VLESS, REALITY, gRPC, and xHTTP protocols without corporate spying." />

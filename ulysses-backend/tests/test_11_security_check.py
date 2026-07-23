@@ -6,6 +6,8 @@
 
 import sys
 from pathlib import Path
+import asyncio
+
 
 # Добавляем корень проекта в путь
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -203,5 +205,6 @@ def main():
     return all_ok
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    import sys
+    # 🟢 ИСПРАВЛЕНО: Убран asyncio.run, так как main() является обычной синхронной функцией
+    sys.exit(0 if main() else 1)

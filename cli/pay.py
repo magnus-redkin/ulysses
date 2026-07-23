@@ -1,94 +1,134 @@
-# cli/pay.py
-
-# МОНИТОРИНГ ТРАНЗАКЦИЙ И СТАТУСОВ ПЛАТЕЖНЫХ СЧЕТОВ CLI PAY
-# Данный модуль предоставляет инструменты оператора для проверки статуса инвойсов.
-# Выполняет HTTP-запросы к административному контуру бэкенда для сверки локального
-# состояния счетов с реальными ответами шлюзов эквайринга в режиме реального времени.
+# ulysses-backend/cli/pay.py
 
 import asyncio
-import httpx
 import click
+import uuid as uuid_lib
 from rich.console import Console
-from rich.panel import Panel
+from rich.table import Table
+from sqlalchemy import text
+from app.database import AsyncSessionLocal
 
 console = Console()
-BACKEND_API_URL = "http://127.0.0.1:8000"
 
-# Настройки контекста для жесткого переопределения ключей хелпа Click на uadmin
 CONTEXT_SETTINGS = dict(
     help_option_names=['-h', '--help'],
     max_content_width=120
 )
 
-@click.group(name="pay", context_settings=CONTEXT_SETTINGS)
+@click.group(context_settings=CONTEXT_SETTINGS)
 def pay():
-    """Управление платежами и интеграцией с эквайрингом.
-
-    Использование: uadmin pay КОМАНДА [АРГУМЕНТЫ]...
-    """
+    """Управление платежными инвойсами и интеграцией Platega.io."""
     pass
 
-# Переопределяем отображение имени группы в подсказках хелпа нижнего уровня
 pay.get_usage = lambda ctx: "uadmin pay [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
-@pay.command(name="info")
-@click.argument("order_id", required=True)
-def pay_info(order_id):
-    """Запросить актуальный статус инвойса у платёжной системы через бэкенд.
+@pay.command(name="invoice")
+@click.option("--tg-id", type=int, required=True, help="Telegram ID пользователя")
+@click.option("--tariff", default="sub_1m", help="Слаг тарифа (sub_1m, sub_3m, sub_12m)")
+@click.option("--currency", default="RUB", help="Валюта платежа (RUB, USD, EUR, USDT)")
+@click.option("--amount", type=float, default=None, help="Сумма (опционально, иначе берется из tariffs.json)")
+def pay_invoice(tg_id, tariff, currency, amount):
+    """Сгенерировать тестовую мультивалютную платежную ссылку для пользователя."""
+    async def _invoice():
+        import json
+        import os
+        from app.private.platega_service import PlategaPaymentService
 
-    Пример: uadmin pay info 3c9a41b5-6f8d-4be4-96f1-65a2a89d36f0
-    """
-    console.print(f"[yellow]⏳ Запрос статуса платежа {order_id}...[/yellow]")
+        async with AsyncSessionLocal() as session:
+            # 1. Находим пользователя
+            res_user = await session.execute(text("SELECT id, email FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_id})
+            user_row = res_user.fetchone()
+            if not user_row:
+                console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} не найден в СУБД.[/red]")
+                return
+            user_internal_id, db_email = user_row
 
-    async def _info():
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{BACKEND_API_URL}/api/admin/pay/info/{order_id}"
-                )
+            # 2. Определяем цену из tariffs.json, если не передана вручную
+            if amount is None:
+                json_path = "ulysses-backend/app/tariffs.json"
+                if not os.path.exists(json_path): json_path = "app/tariffs.json"
 
-                if response.status_code == 404:
-                    console.print(f"[red]❌ Инвойс {order_id} не найден.[/red]")
-                    return
-                elif response.status_code != 200:
-                    console.print(f"[red]❌ Ошибка: HTTP {response.status_code}[/red]")
-                    return
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        t_config = json.load(f)
+                    amount = t_config[tariff.lower().strip()]["price"]
+                except:
+                    amount = 199.0  # Дефолт
 
-                data = response.json()
+            # 3. Создаем запись инвойса в PostgreSQL
+            new_attempt_id = str(uuid_lib.uuid4())
+            sql_insert = """
+                INSERT INTO payment_attempts (id, email, user_id, tariff_slug, amount, currency, status, created_at, updated_at)
+                VALUES (:id, :email, :uid, :tariff, :amount, :currency, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+            await session.execute(text(sql_insert), {
+                "id": new_attempt_id,
+                "email": db_email if db_email else f"tg_{tg_id}@ulysses.internal",
+                "uid": user_internal_id,
+                "tariff": tariff,
+                "amount": amount,
+                "currency": currency.upper().strip()
+            })
+            await session.commit()
 
-                # Корректируем под реальные ключи нашего эндпоинта admin.py
-                status = data.get("gateway_status", data.get("local_status", "unknown")).lower()
-                amount = data.get("local_amount", "-")
-                currency = data.get("currency", "RUB")
-                provider = data.get("provider", "Platega / Gate")
-                created_at = data.get("checked_at", "-")
-                local_status = data.get("local_status", "-")
+            # 4. Вызываем наш асинхронный платежный сервис
+            console.print(f"[yellow]⏳ Запрос к Platega API на генерацию ссылки ({currency.upper()} {amount})...[/yellow]")
+            pay_service = PlategaPaymentService()
 
-                if status in ("success", "paid"):
-                    status_str = "[bold green]✅ ОПЛАЧЕН[/bold green]"
-                elif status in ("wait", "pending"):
-                    status_str = "[bold yellow]⏳ ОЖИДАЕТ ОПЛАТЫ[/bold yellow]"
-                else:
-                    status_str = f"[bold red]❌ {status.upper()}[/bold red]"
+            # Для тестов мультивалютности выберем метод КРИПТА (13) или МЕЖДУНАРОДНЫЕ (12), если валюта не RUB
+            pay_method = 10 if currency.upper() == "RUB" else 13
 
-                content = (
-                    f"[cyan]Платёжный шлюз :[/cyan] {provider}\n"
-                    f"[cyan]ID Инвойса     :[/cyan] {order_id}\n"
-                    f"[cyan]Сумма          :[/cyan] {amount} {currency}\n"
-                    f"[cyan]Дата проверки  :[/cyan] {created_at}\n"
-                    f"[cyan]Статус у кассы :[/cyan] {status_str}\n"
-                    f"[cyan]Локальный статус:[/cyan] {local_status}"
-                )
+            res_link = await pay_service.create_invoice_link(
+                amount=amount,
+                currency=currency,
+                attempt_id=new_attempt_id,
+                tariff_name=tariff,
+                method=pay_method
+            )
 
-                console.print(Panel(content, title="💳 Информация о платеже", border_style="cyan", expand=False))
+            if res_link and "redirect" in res_link:
+                console.print(f"\n[bold green]🎉 Платежная сессия успешно инициализирована![/bold green]")
+                console.print(f"🆔 ID Инвойса (Ulysses): [cyan]{new_attempt_id}[/cyan]")
+                console.print(f"🆔 ID Транзакции (Platega): [yellow]{res_link.get('transactionId')}[/yellow]")
+                console.print(f"🔗 [bold magenta]ССЫЛКА НА СТРАНИЦУ ОПЛАТЫ:[/bold magenta]")
+                console.print(f"[bold white on magenta] {res_link.get('redirect')} [/bold white on magenta]\n")
+            else:
+                console.print("[red]❌ Ошибка: Агрегатор Platega отклонил запрос на генерацию ссылки.[/red]")
 
-        except httpx.ConnectError:
-            console.print("[red]❌ Бэкенд не запущен.[/red]")
-        except Exception as e:
-            console.print(f"[red]❌ Ошибка: {e}[/red]")
+    asyncio.run(_invoice())
 
-    asyncio.run(_info())
+
+@pay.command(name="check")
+@click.argument("invoice_id", type=str)
+def pay_check(invoice_id):
+    """Принудительно опросить статус инвойса напрямую в API Platega."""
+    async def _check():
+        from app.private.platega_service import PlategaPaymentService
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(text("SELECT provider_tx_id, status FROM payment_attempts WHERE id = :id"), {"id": invoice_id})
+            row = res.fetchone()
+            if not row:
+                console.print(f"[red]❌ Ошибка: Инвойс {invoice_id} не найден в СУБД Ulysses.[/red]")
+                return
+            tx_id, local_status = row
+
+            if not tx_id:
+                console.print("[yellow]⚠️ У инвойса нет привязанного ID транзакции провайдера (платеж не начинался).[/yellow]")
+                return
+
+            pay_service = PlategaPaymentService()
+            status_data = await pay_service.verify_payment_status(tx_id)
+
+            if status_data:
+                console.print(f"\n📊 [Platega API] Статус транзакции {tx_id}:")
+                console.print(f"   • Статус в Platega: [bold yellow]{status_data.get('status')}[/bold yellow]")
+                console.print(f"   • Локальный статус в СУБД: [bold cyan]{local_status}[/bold cyan]")
+            else:
+                console.print("[red]❌ Не удалось получить данные от Platega API.[/red]")
+
+    asyncio.run(_check())
 
 
 if __name__ == "__main__":

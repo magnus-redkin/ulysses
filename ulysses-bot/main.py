@@ -50,21 +50,51 @@ dp = Dispatcher()
 # КЛАВИАТУРЫ (только отображение, логика в бэкенде)
 # ============================================================
 
-def get_subscriptions_keyboard(tariffs: list = None) -> InlineKeyboardMarkup:
-    """Клавиатура с чистым текстом без эмодзи и короткими callback-данными."""
+# ============================================================
+# КЛАВИАТУРЫ (только отображение, логика в бэкенде)
+# ============================================================
+
+def get_subscriptions_keyboard(tariffs: list = None, current_currency: str = "rub") -> InlineKeyboardMarkup:
+    """
+    Клавиатура тарифов со встроенной строкой радиокнопок выбора валюты.
+    По умолчанию активны рубли (rub). Также поддерживаются usd и crypto.
+    """
     buttons = []
+
+    # 1. СТРОКА РАДИОКНОПОК (Эмуляция переключателя валют)
+    rub_radio = "🔘 ₽" if current_currency == "rub" else "⚪ (₽)"
+    usd_radio = "🔘 $/€" if current_currency == "usd" else "⚪ $/€"
+    crypto_radio = "🔘 Крипто" if current_currency == "crypto" else "⚪ Крипта"
+
+    buttons.append([
+        InlineKeyboardButton(text=rub_radio, callback_data="curr_rub"),
+        InlineKeyboardButton(text=usd_radio, callback_data="curr_usd"),
+        InlineKeyboardButton(text=crypto_radio, callback_data="curr_crypto")
+    ])
+
+    # 2. ДИНАМИЧЕСКИЙ СПИСОК ТАРИФОВ С УЧЕТОМ ВЫБРАННОЙ ВАЛЮТЫ
     if tariffs:
         for t in tariffs:
             clean_name = t["name_ru"].replace("🎁 ", "").replace("📅 ", "").replace("—", "-")
-            slug = t["slug"].replace("sub_", "")  # Остается 'free', '1m', '3m'
-            buttons.append([InlineKeyboardButton(text=clean_name, callback_data=f"t_{slug}")])
+            slug = t["slug"].replace("sub_", "")  # Остается 'free', '1m', '3m', '6m', '12m'
+
+            # Подменяем визуальный символ валюты в кнопках в зависимости от стейта
+            if current_currency == "usd":
+                clean_name = clean_name.replace("₽", "$").replace(" ₽", " $")
+            elif current_currency == "crypto":
+                clean_name = clean_name.replace("₽", "USDT").replace(" ₽", " USDT")
+
+            # Вшиваем слаг тарифа и выбранную валюту в callback_data через двоеточие
+            # Пример: 't_1m:rub', 't_12m:crypto'
+            buttons.append([InlineKeyboardButton(text=clean_name, callback_data=f"t_{slug}:{current_currency}")])
 
     buttons.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 KEYBOARDS = {
-    "tariffs": lambda tariffs=None: get_subscriptions_keyboard(tariffs),
+    # 🟢 ИСПРАВЛЕНО: Теперь фабрика корректно пробрасывает аргумент валюты
+    "tariffs": lambda tariffs=None, current_currency="rub": get_subscriptions_keyboard(tariffs, current_currency),
 
     "active": lambda: InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Узнать баланс", callback_data="check_balance")],
@@ -132,8 +162,6 @@ def format_balance_from_state(balance: dict) -> str:
 
 # Внутри ulysses-bot/main.py
 
-# Внутри ulysses-bot/main.py
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     tg_user_id = message.from_user.id
@@ -151,8 +179,8 @@ async def cmd_start(message: Message):
     # 2. Собираем клавиатуру главного меню
     full_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🚀 Подключить VPN", callback_data="buy_tariff"),
-            InlineKeyboardButton(text="📊 Баланс и Трафик", callback_data="check_balance")
+            InlineKeyboardButton(text="🚀 Подключить VPN", callback_data="buy_tariff")
+            # InlineKeyboardButton(text="📊 Баланс и Трафик", callback_data="check_balance")
         ],
         [
             InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="show_about"),
@@ -207,6 +235,38 @@ async def cmd_support(message: Message):
 # CALLBACK МАРШРУТИЗАЦИЯ НАЖАТИЙ (INLINE CLICK HANDLERS)
 # ============================================================
 
+# ============================================================
+# CALLBACK МАРШРУТИЗАЦИЯ НАЖАТИЙ (INLINE CLICK HANDLERS)
+# ============================================================
+
+@dp.callback_query(F.data.startswith("curr_"))
+async def btn_change_currency(callback: CallbackQuery):
+    """
+    🔘 ХЕНДЛЕР РАДИОКНОПОК: Перехватывает смену валюты в меню тарифов.
+    Мгновенно перерисовывает клавиатуру, подставляя новые эмодзи и символы валют.
+    """
+    await callback.answer()
+    new_currency = callback.data.replace("curr_", "") # 'rub', 'usd', 'crypto'
+
+    logger.info(f"💲 [БОТ ВАЛЮТА] Пользователь переключил отображение на: {new_currency}")
+
+    # Запрашиваем тарифы с бэкенда для рендеринга
+    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+    if not tariffs_resp:
+        await callback.message.edit_text("⚠️ Не удалось загрузить тарифную сетку.", reply_markup=KEYBOARDS["back"]())
+        return
+
+    tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()]
+    # Перерисовываем клавиатуру с новым флагом валюты
+    keyboard = get_subscriptions_keyboard(tariffs, current_currency=new_currency)
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception as e:
+        if "message is not modified" not in str(e):
+            logger.error(f"Ошибка обновления радиокнопок: {e}")
+
+
 @dp.callback_query(F.data == "back_to_menu")
 async def btn_back(callback: CallbackQuery):
     try:
@@ -219,7 +279,7 @@ async def btn_back(callback: CallbackQuery):
         if kb_name == "tariffs":
             tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
             tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
-            keyboard = get_subscriptions_keyboard(tariffs)
+            keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # Дефолт рубли при возврате
         else:
             keyboard = KEYBOARDS.get(kb_name, KEYBOARDS["back"])()
 
@@ -232,49 +292,63 @@ async def btn_back(callback: CallbackQuery):
             logger.error(f"Ошибка в btn_back: {e}")
             await callback.answer()
 
+
 @dp.callback_query(F.data == "show_tariffs")
 async def btn_show_tariffs(callback: CallbackQuery):
-    """
-    Обработчик клика по кнопке 'Посмотреть тарифы'.
-    Запрашивает актуальный JSON тарифов напрямую из API биллинга.
-    """
+    """Обработчик клика по кнопке 'Посмотреть тарифы' с дефолтным переключателем RUB."""
     await callback.answer()
     logger.info("🔍 Пользователь запросил отображение тарифной сетки")
     tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
 
     if not tariffs_resp:
-        await callback.message.edit_text("⚠️ Не удалось загрузить тарифную сетку. Сервис биллинга временно недоступен.", reply_markup=KEYBOARDS["back"]())
+        await callback.message.edit_text("⚠️ Не удалось загрузить тарифную сетку.", reply_markup=KEYBOARDS["back"]())
         return
 
     tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()]
-    keyboard = get_subscriptions_keyboard(tariffs)
-    await callback.message.edit_text("🛒 Выберите подходящий тарифный план для старта Ulysses VPN:", reply_markup=keyboard)
+    keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # По умолчанию рубли
+    await callback.message.edit_text("🛒 Выберите подходящий тарифный план для Ulysses VPN:", reply_markup=keyboard)
 
-# Измените финальные хендлеры в самом конце ulysses-bot/main.py:
 
 @dp.callback_query(F.data.startswith("t_") | F.data.startswith("tariff_"))
 async def btn_tariff(callback: CallbackQuery):
     """
-    Универсальный обработчик клика по кнопке любого тарифа.
-    Восстанавливает чистый слаг и шлет POST запрос на покупку/активацию в бэкенд.
+    Универсальный обработчик клика по кнопке любого тарифа с поддержкой мультивалютности.
+    Парсит callback вида 't_1m:usd' или 't_1m:rub' и пушит параметры в бэкенд биллинга.
     """
     await callback.answer()
     raw_data = callback.data
 
-    if raw_data.startswith("tariff_"):
-        tariff_slug = raw_data.replace("tariff_", "")
+    # Инициализируем дефолты
+    chosen_currency = "rub"
+
+    # Извлекаем валюту, если она зашита через двоеточие (наша новая схема)
+    if ":" in raw_data:
+        raw_slug, chosen_currency = raw_data.split(":", 1)
     else:
-        short_slug = raw_data.replace("t_", "")
+        raw_slug = raw_data
+
+    # Приводим слаг к техническому стандарту бэкенда (sub_*)
+    if raw_slug.startswith("tariff_"):
+        tariff_slug = raw_slug.replace("tariff_", "")
+    else:
+        short_slug = raw_slug.replace("t_", "")
         tariff_slug = short_slug if short_slug.startswith("sub_") else f"sub_{short_slug}"
 
-    logger.info(f"💰 [БОТ ТАРИФ] Клик по кнопке тарифа ➔ Слаг для бэкенда: {tariff_slug}")
+    # Конвертируем внутренние типы валют под спецификацию Platega ISO
+    currency_iso = "RUB"
+    if chosen_currency == "usd": currency_iso = "USD"
+    elif chosen_currency == "crypto": currency_iso = "USDT"
 
+    logger.info(f"💰 [БОТ ТАРИФ] Клик ➔ Тариф: {tariff_slug} | Выбранная Валюта: {currency_iso}")
+
+    # Пробрасываем сигнал покупки на бэкенд, передавая currency_iso
     state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
                            json={
                                "tg_user_id": callback.from_user.id,
                                "action": "buy_tariff",
                                "payload": {
                                    "tariff_slug": tariff_slug,
+                                   "currency": currency_iso,  # 🟢 Пушим выбранную валюту бэкенду!
                                    "tg_username": callback.from_user.username or "unknown"
                                }
                            })
@@ -283,10 +357,8 @@ async def btn_tariff(callback: CallbackQuery):
         await callback.message.edit_text("⚠️ Ошибка обработки запроса биллинга.", reply_markup=KEYBOARDS["back"]())
         return
 
-    # Подгружаем клавиатуру ответа (обычно это кнопка "Назад в меню")
     keyboard = KEYBOARDS.get(state.get("keyboard", "back"), KEYBOARDS["back"])()
 
-    # 🌟 ИСПРАВЛЕНИЕ: Добавлен parse_mode="HTML" для вывода сообщения об успешном принятии заказа
     await callback.message.edit_text(
         text=state.get("message", "Операция успешно обработана"),
         reply_markup=keyboard,
@@ -296,13 +368,10 @@ async def btn_tariff(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("action_") | F.data.in_(["buy_tariff", "check_balance", "show_about", "show_rules", "show_support"]))
 async def btn_action(callback: CallbackQuery):
-    """
-    🌟 ГЛОБАЛЬНЫЙ ПЕРЕХВАТЧИК СЕРВИСНЫХ ЭКШЕНОВ:
-    Обрабатывает информационные экраны главного меню. Игнорирует прямые клики по тарифам t_.
-    """
+    """Глобальный перехватчик сервисных экшенов."""
     await callback.answer()
     action = callback.data.replace("action_", "")
-    logger.info(f"⚙️ [БОТ ЭКШЕН] Проброс сервисного сигнала на бэкенд ➔ action: {action}")
+    logger.info(f"⚙️ [БОТ ЭКШЕН] Проброс сервисного сигнала ➔ action: {action}")
 
     state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
                            json={"tg_user_id": callback.from_user.id, "action": action})
@@ -315,7 +384,7 @@ async def btn_action(callback: CallbackQuery):
     if kb_name == "tariffs":
         tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
         tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
-        keyboard = get_subscriptions_keyboard(tariffs)
+        keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # Дефолт rub при входе через Купить
     else:
         keyboard = KEYBOARDS.get(kb_name, KEYBOARDS["back"])()
 
@@ -327,6 +396,8 @@ async def btn_action(callback: CallbackQuery):
     except Exception as e:
         if "message is not modified" not in str(e):
             logger.error(f"Ошибка изменения текста в экшене: {e}")
+
+
 # ============================================================
 # ОБРАБОТКА ТИКЕТОВ ПОДДЕРЖКИ (SUPPORT TICKETS)
 # ============================================================

@@ -18,7 +18,8 @@ import httpx
 import uuid
 
 from app.config import settings
-from app.provisioning_service import HiddifyProvisioner
+# 🟢 ИСПРАВЛЕНО: Правильный импорт вашего боевого клиента Hiddify
+from app.services.hiddify_client import HiddifyProvisioner
 from cli.brain.db import query, execute, close
 
 async def test_full_user_lifecycle():
@@ -45,11 +46,12 @@ async def test_full_user_lifecycle():
     # -----------------------------------------------------------------
     # Шаг 2: Создание пользователя в Hiddify через Бэкенд
     # -----------------------------------------------------------------
-    # Передаем обязательные параметры. Метод сам возьмет нормализованный URL из config.py
+    # 🟢 ИСПРАВЛЕНО: Передаем параметры, которые РЕАЛЬНО принимает ваш метод create_user
     res = await service.create_user(
-        user_uuid=allocated_uuid,
-        email=test_email,
-        tariff_slug="sub_free"
+        uuid=allocated_uuid,
+        name="test_live_user",
+        package_days=3,       # Соответствует бесплатному тарифу sub_free из вашей json-карты
+        usage_limit_gb=10     # Соответствует бесплатному тарифу sub_free (10 ГБ)
     )
 
     # Распаковываем ответ (учитываем, что метод возвращает кортеж (success, data, error) или bool)
@@ -88,12 +90,19 @@ if __name__ == "__main__":
     print("🧪 ЗАПУСК АСИНХРОННОГО ИНТЕГРАЦИОННОГО ТЕСТА (ЧИСТЫЙ URL)")
     print("============================================================")
 
+    import sys
+    success_status = False
+
     try:
         asyncio.run(test_full_user_lifecycle())
         print("\n============================================================")
         print("✅ ИНТЕГРАЦИОННЫЙ ТЕСТ УСПЕШНО ПРОЙДЕН!")
         print("============================================================")
+        success_status = True
     except AssertionError as e:
         print(f"\n❌ ТЕСТ ПРОВАЛЕН: {e}")
     except Exception as e:
         print(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА ВЫПОЛНЕНИЯ: {e}")
+
+    # 🟢 ГЛАВНЫЙ ФИКС ДЛЯ run_all.py: Отдаем честный системный exit code
+    sys.exit(0 if success_status else 1)
