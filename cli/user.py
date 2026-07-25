@@ -39,7 +39,16 @@ async def user_create(tg_id, username):
     активирует 3-дневный триал и делает провижн на ноду Hiddify v2.
     """
     import uuid as uuid_lib
-    from app.services.telegram_bot import send_telegram_message
+    try:
+        from app.services.telegram_bot import send_telegram_message
+        # Если ваша функция лежит в другом месте, например в app/services/bot.py,
+        # то правильная строка будет: from app.services.bot import send_telegram_message
+    except ImportError:
+        try:
+            from app.services.bot import send_telegram_message
+        except ImportError:
+            send_telegram_message = None
+            console.print("[yellow]⚠️ Предупреждение: Модуль отправки ТГ-сообщений не найден. Пуш пропущен.[/yellow]")
 
     clean_username = username.lstrip("@").strip()
     new_uuid = str(uuid_lib.uuid4())
@@ -271,3 +280,51 @@ def user_link(tg_id):
 
     import asyncio
     asyncio.run(_get_user_link())
+
+# ============================================================
+# 🔮 КОМАНДА: ИНСПЕКТОР СТРОК ПОДПИСКИ (USER JSON/TXT)
+# ============================================================
+# Найти команду @user.command(name="json") в cli/user.py и заменить её внутреннюю часть:
+
+@user.command(name="json")
+@click.option("--tg-id", type=int, required=True, help="Telegram ID пользователя")
+def user_json(tg_id):
+    """Вывести на экран чистый структурированный JSON-конфиг Sing-box/Hiddify для пользователя."""
+    import asyncio
+    import json
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    from app.routers.sub_render import generate_singbox_json # Импортируем нашу фабрику структуры
+
+    async def _render_json():
+        async with AsyncSessionLocal() as session:
+            sql = """
+                SELECT u.hiddify_uuid, s.status, s.expires_at
+                FROM users u
+                LEFT JOIN subscriptions s ON s.user_id = u.id
+                WHERE u.tg_user_id = :tg_id
+                ORDER BY s.expires_at DESC LIMIT 1
+            """
+            res = await session.execute(text(sql), {"tg_id": tg_id})
+            row = res.fetchone()
+
+            if not row:
+                console.print(f"[red]❌ Ошибка: Пользователь с Telegram ID {tg_id} не найден в СУБД.[/red]")
+                return
+
+            hiddify_uuid, status, expires_at = row
+
+            console.print(f"\n📋 [bold white]Профиль инспекции для TG ID {tg_id}:[/bold white]")
+            console.print(f"   • Статус в БД: [{'green' if status == 'active' else 'red'}]{status}[/]")
+            console.print(f"   • Ключ UUID: [cyan]{hiddify_uuid}[/cyan]\n")
+
+            # Генерируем JSON
+            json_config = generate_singbox_json(str(hiddify_uuid))
+
+            console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")
+            console.print("─" * 100)
+            # Выводим красивый JSON с отступами напрямую в консоль
+            console.print(json.dumps(json_config, indent=2, ensure_ascii=False))
+            console.print("─" * 100 + "\n")
+
+    asyncio.run(_render_json())
