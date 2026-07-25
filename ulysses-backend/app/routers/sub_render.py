@@ -1,156 +1,163 @@
 # ulysses-backend/app/routers/sub_render.py
 
 import logging
-import json
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from datetime import datetime, timezone
-from app.database import AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+from app.config import settings
 
-logger = logging.getLogger("ulysses.sub_render")
-router = APIRouter(prefix="/subscription", tags=["subscription"])
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["Subscription Render"])
 
-def generate_singbox_json(hiddify_uuid: str) -> dict:
-    """Генерация эталонного JSON-конфига Sing-box для Reality + xHTTP (3 гейта)."""
+# Константы Reality и XHTTP
+REALITY_PUBLIC_KEY = "HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE"
+REALITY_SHORT_ID = "0a3f9c1d7b2e4a0f"
+XHTTP_PATH = "/TZe1DA5Xmdguu8htyuGgnt"
+DECOY_SITE = getattr(settings, "DECOY_SITE", "dl.google.com")
 
-    # Имена нод, которые будут отображаться в селекторе Hiddify
-    node_1_tag = "🚀 Ulysses Premium #1 [Round-Robin]"
-    node_2_tag = "🚀 Ulysses Premium #2 [Round-Robin]"
-    node_3_tag = "🛡️ Ulysses Backup [Резерв]"
 
-    all_proxies = [node_1_tag, node_2_tag, node_3_tag]
+async def get_active_gateways(db: AsyncSession):
+    """Возвращает первый IP для каждого активного гейта."""
+    gateways_sql = text("""
+        SELECT DISTINCT ON (n.id)
+            n.name, n.country, n.country_code, g.ip_address, g.port
+        FROM gateways g
+        JOIN nodes n ON g.node_id = n.id
+        WHERE n.node_type = 'gate' AND g.status = 'active'
+        ORDER BY n.id, g.id ASC
+    """)
+    gw_res = await db.execute(gateways_sql)
+    return gw_res.fetchall()
 
-    config = {
-        "outbounds": [
-            # 1. Основной селектор выбора прокси в интерфейсе
-            {
-                "type": "selector",
-                "tag": "proxy",
-                "outbounds": ["Best Latency"] + all_proxies,
-                "interrupt_exist_connections": True
-            },
-            # 2. Авто-выбор ноды с наименьшей задержкой (Пинг-тест)
-            {
-                "type": "urltest",
-                "tag": "Best Latency",
-                "outbounds": all_proxies,
-                "interval": "3m",
-                "tolerance": 50
-            },
-            # Служебные системные аутбаунды ядра
-            {"type": "direct", "tag": "direct"},
-            {"type": "block", "tag": "block"},
-            {"type": "dns", "tag": "dns-out"},
 
-            # 3. ГЕЙТ №1 (Round-Robin)
-            {
-                "type": "vless",
-                "tag": node_1_tag,
-                "server": "62.60.249.53",
-                "server_port": 443,
-                "uuid": hiddify_uuid,
-                "tls": {
-                    "enabled": True,
-                    "server_name": "dl.google.com",
-                    "utls": {"enabled": True, "fingerprint": "chrome"},
-                    "reality": {
-                        "enabled": True,
-                        "public_key": "HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE",
-                        "short_id": "0a3f9c1d7b2e4a0f"
-                    }
+async def generate_singbox_json(uuid: str, db: AsyncSession) -> dict:
+    """
+    Генерирует готовый JSON для SingBox/Hiddify клиента.
+    Используется и роутером API, и CLI (uadmin user json).
+    """
+    clean_uuid = str(uuid).strip().lower()
+
+    # Проверка пользователя
+    user_sql = text("""
+        SELECT u.id, s.status FROM users u
+        LEFT JOIN subscriptions s ON s.user_id = u.id
+        WHERE u.hiddify_uuid = :uuid ORDER BY s.id DESC LIMIT 1
+    """)
+    user_res = await db.execute(user_sql, {"uuid": clean_uuid})
+    user_row = user_res.fetchone()
+
+    if not user_row:
+        raise ValueError("Subscription not found")
+
+    user_id, sub_status = user_row
+    if sub_status != "active":
+        return {
+            "outbounds": [
+                {"type": "block", "tag": "🔒 Подписка истекла"},
+                {
+                    "type": "selector",
+                    "tag": "proxy",
+                    "outbounds": ["🔒 Подписка истекла"],
+                    "interrupt_exist_connections": True
                 },
-                # 🌟 СПЕЦИФИКАЦИЯ xHTTP ТРАНСПОРТА:
-                "transport": {
-                    "type": "xhttp",
-                    "path": "/TZe1DA5Xmdguu8htyuGgnt",
-                    "host": "dl.google.com"
+                {"type": "direct", "tag": "direct"},
+                {"type": "block", "tag": "block"},
+                {"type": "dns", "tag": "dns-out"}
+            ]
+        }
+
+    active_gateways = await get_active_gateways(db)
+
+    outbounds_servers = []
+    auto_select_tags = []
+    all_selectable_tags = []
+
+    for gw in active_gateways:
+        node_name, country, country_code, ip, port = gw
+
+        if country_code == "FI":
+            country_name = "Finland"
+            flag = "🇫🇮"
+        elif country_code == "SE":
+            country_name = "Sweden"
+            flag = "🇸🇪"
+        else:
+            country_name = "Russia"
+            flag = "🇷🇺"
+
+        node_tag = f"{flag} {country_name}"
+
+        vless_node = {
+            "type": "vless",
+            "tag": node_tag,
+            "server": ip,
+            "server_port": 443,
+            "uuid": clean_uuid,
+            "tls": {
+                "enabled": True,
+                "server_name": DECOY_SITE,
+                "utls": {
+                    "enabled": True,
+                    "fingerprint": "chrome"
+                },
+                "reality": {
+                    "enabled": True,
+                    "public_key": REALITY_PUBLIC_KEY,
+                    "short_id": REALITY_SHORT_ID
                 }
             },
-            # 4. ГЕЙТ №2 (Round-Robin)
-            {
-                "type": "vless",
-                "tag": node_2_tag,
-                "server": "138.124.25.80",
-                "server_port": 443,
-                "uuid": hiddify_uuid,
-                "tls": {
-                    "enabled": True,
-                    "server_name": "dl.google.com",
-                    "utls": {"enabled": True, "fingerprint": "chrome"},
-                    "reality": {
-                        "enabled": True,
-                        "public_key": "HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE",
-                        "short_id": "0a3f9c1d7b2e4a0f"
-                    }
-                },
-                "transport": {
-                    "type": "xhttp",
-                    "path": "/TZe1DA5Xmdguu8htyuGgnt",
-                    "host": "dl.google.com"
-                }
-            },
-            # 5. ГЕЙТ №3 (Резервный шлюз)
-            {
-                "type": "vless",
-                "tag": node_3_tag,
-                "server": "45.151.102.125",
-                "server_port": 443,
-                "uuid": hiddify_uuid,
-                "tls": {
-                    "enabled": True,
-                    "server_name": "dl.google.com",
-                    "utls": {"enabled": True, "fingerprint": "chrome"},
-                    "reality": {
-                        "enabled": True,
-                        "public_key": "HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE",
-                        "short_id": "0a3f9c1d7b2e4a0f"
-                    }
-                },
-                "transport": {
-                    "type": "xhttp",
-                    "path": "/TZe1DA5Xmdguu8htyuGgnt",
-                    "host": "dl.google.com"
-                }
+            "transport": {
+                "type": "xhttp",
+                "mode": "auto",
+                "path": XHTTP_PATH
             }
-        ]
-    }
-    return config
+        }
+
+        outbounds_servers.append(vless_node)
+        all_selectable_tags.append(node_tag)
+        auto_select_tags.append(node_tag)
+
+    final_outbounds = [
+        {
+            "type": "selector",
+            "tag": "proxy",
+            "outbounds": ["Best Latency"] + all_selectable_tags,
+            "interrupt_exist_connections": True
+        },
+        {
+            "type": "urltest",
+            "tag": "Best Latency",
+            "outbounds": auto_select_tags,
+            "url": "https://www.gstatic.com/generate_204",
+            "interval": "3m0s",
+            "tolerance": 50
+        },
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+        {"type": "dns", "tag": "dns-out"}
+    ]
+
+    final_outbounds.extend(outbounds_servers)
+
+    return {"outbounds": final_outbounds}
 
 
-@router.get("/{hiddify_uuid}/")
-async def render_user_subscription(hiddify_uuid: str):
-    """Раздача нативного JSON-конфига Sing-box."""
-    async with AsyncSessionLocal() as session:
-        sql_user = """
-            SELECT u.id, s.expires_at
-            FROM users u
-            JOIN subscriptions s ON s.user_id = u.id
-            WHERE u.hiddify_uuid = :uuid AND s.status = 'active'
-            LIMIT 1
-        """
-        res = await session.execute(text(sql_user), {"uuid": hiddify_uuid})
-        row = res.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Active subscription not found")
+@router.get("/X6CbExbUw2/sub/{uuid}/")
+@router.get("/X6CbExbUw2/sub/{uuid}")
+@router.get("/subscription/{uuid}/")
+@router.get("/subscription/{uuid}")
+async def render_singbox_subscription(
+    uuid: str,
+    user_agent: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db)
+):
+    clean_uuid = str(uuid).strip().lower()
+    logger.info(f"📡 [SUB RENDER] Запрос подписки для UUID: {clean_uuid}")
 
-        user_id, db_expires_at = row
-
-        # Генерируем структуру словаря
-        json_config = generate_singbox_json(hiddify_uuid)
-
-        # Вычисляем заголовок лимитов для полосы прогресса в Hiddify
-        total_bytes = 536870912000
-        expire_timestamp = int(db_expires_at.replace(tzinfo=timezone.utc).timestamp()) if db_expires_at else 0
-        user_info_header = f"upload=0; download=0; total={total_bytes}; expire={expire_timestamp}"
-
-        # Отдаем чистый форматированный JSON-текст
-        return Response(
-            content=json.dumps(json_config, indent=2, ensure_ascii=False),
-            media_type="application/json; charset=utf-8",
-            headers={
-                "Content-Disposition": f"attachment; filename=config_{hiddify_uuid[:8]}.json",
-                "Cache-Control": "no-store, no-cache, must-revalidate",
-                "Subscription-Userinfo": user_info_header,
-                "Profile-Title": "Ulysses Premium JSON"
-            }
-        )
+    try:
+        result = await generate_singbox_json(clean_uuid, db)
+        return JSONResponse(status_code=200, content=result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

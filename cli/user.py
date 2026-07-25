@@ -267,13 +267,14 @@ def user_link(tg_id):
 
                 # Собираем эталонную парадную ссылку подписки
                 base_domain = "ulysses.best"
-                client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/"
+                client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/#Ulysses"
 
                 console.print(f"\n[bold green]🔑 Сетевой паспорт пользователя успешно извлечен![/bold green]")
                 console.print(f"👤 Пользователь: [cyan]@{tg_username if tg_username else '—'}[/cyan] (TG ID: {tg_id})")
                 console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
                 console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT:[/bold magenta]")
-                console.print(f"[bold white on magenta] {client_sub_url} [/bold white on magenta]\n")
+                console.print(f"[bold white on magenta]{client_sub_url}[/bold white on magenta]\n")
+
 
             except Exception as err:
                 console.print(f"[red]❌ Ошибка при обращении к СУБД: {err}[/red]")
@@ -318,12 +319,11 @@ def user_json(tg_id):
             console.print(f"   • Статус в БД: [{'green' if status == 'active' else 'red'}]{status}[/]")
             console.print(f"   • Ключ UUID: [cyan]{hiddify_uuid}[/cyan]\n")
 
-            # Генерируем JSON
-            json_config = generate_singbox_json(str(hiddify_uuid))
+            # Генерируем JSON — теперь с await и передачей session
+            json_config = await generate_singbox_json(str(hiddify_uuid), session)
 
             console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")
             console.print("─" * 100)
-            # Выводим красивый JSON с отступами напрямую в консоль
             console.print(json.dumps(json_config, indent=2, ensure_ascii=False))
             console.print("─" * 100 + "\n")
 
