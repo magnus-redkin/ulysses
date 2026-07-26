@@ -17,9 +17,13 @@ fi
 
 DB_NAME=${DB_NAME:-"ulysses_db"}
 DB_USER=${DB_USER:-"ulysses_admin"}
-DB_PASS=${DB_PASS:-"fdre4332"}
 DB_HOST=${DB_HOST:-"localhost"}
 DB_PORT=${DB_PORT:-"5432"}
+
+if [ -z "$DB_PASS" ]; then
+    echo "❌ DB_PASS не задан в .env файле"
+    exit 1
+fi
 
 echo "=== Инициализация Ulysses VPN Core DB ==="
 
