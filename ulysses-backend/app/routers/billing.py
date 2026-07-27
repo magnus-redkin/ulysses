@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import text
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import uuid
 import json
 from pathlib import Path
@@ -57,9 +57,12 @@ async def get_tariffs_endpoint():
         raise HTTPException(status_code=500, detail="Unable to load tariffs")
 
 
+
 @router.post("/create-invoice")
 async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db)):
-    """Создание нового счета (инвойса) в БД для бота или веб-страницы."""
+    """Создание нового счета (инвойса) и автоматическая активация бесплатного тарифа."""
+
+    # 1. Читаем конфигурацию тарифов
     try:
         tariffs_path = Path(__file__).parent.parent / "tariffs.json"
         with open(tariffs_path, "r", encoding="utf-8") as f:
@@ -73,6 +76,7 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
 
     logger.info(f"💰 Создание инвойса: тариф={payload.tariff_slug}, цена={amount}")
 
+    # 2. Создаем инвойс
     new_attempt = PaymentAttempt(
         email=payload.email,
         tariff_slug=payload.tariff_slug,
@@ -83,20 +87,90 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
     await db.commit()
     await db.refresh(new_attempt)
 
+    # 3. Для бесплатного тарифа — мгновенная активация
     if amount == 0.00:
-        return {
-            "status": "free_tariff",
-            "order_id": new_attempt.id,
-            "amount": new_attempt.amount,
-            "currency": new_attempt.currency,
-            "message": "Бесплатный тариф. Оплата не требуется."
-        }
+        from app.services.provisioning_manager import activate_free_subscription
+        success = await activate_free_subscription(db, payload.email, payload.tariff_slug)
 
+        if success:
+            # Получаем данные пользователя и подписки для ответа
+            user_query = await db.execute(
+                text("SELECT hiddify_uuid FROM users WHERE email = :email"),
+                {"email": payload.email}
+            )
+            user_row = user_query.fetchone()
+            hiddify_uuid = user_row[0] if user_row else None
+
+            sub_query = await db.execute(
+                text("SELECT expires_at FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = :email) AND tariff_slug = 'sub_free' AND status = 'active' ORDER BY id DESC LIMIT 1"),
+                {"email": payload.email}
+            )
+            sub_row = sub_query.fetchone()
+            expires_at = sub_row[0] if sub_row else None
+
+            domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
+            subscription_link = f"https://{domain}/X6CbExbUw2/sub/{hiddify_uuid}/"
+
+            # Отправка уведомления в Telegram, если есть tg_user_id
+            user_tg = await db.execute(
+                text("SELECT tg_user_id FROM users WHERE email = :email"),
+                {"email": payload.email}
+            )
+            tg_row = user_tg.fetchone()
+            if tg_row and tg_row[0]:
+                try:
+                    from app.services.telegram_bot import send_telegram_message
+                    message_text = (
+                        f"🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN активирован!</b>\n\n"
+                        f"🔑 Ваша персональная ссылка подписки:\n"
+                        f"<code>{subscription_link}</code>\n\n"
+                        f"⏳ Срок действия: до <b>{expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else 'не ограничено'}</b>\n\n"
+                        f"📥 <b>Инструкция по подключению:</b>\n"
+                        f"1. Скопируйте ссылку выше.\n"
+                        f"2. Скачайте и откройте приложение <b>Hiddify Next</b>.\n"
+                        f"3. Нажмите 'Добавить профиль' ➔ вставьте скопированную ссылку.\n"
+                        f"4. Нажмите кнопку подключения.\n\n"
+                        f"🚀 Приятного и безопасного полета!"
+                    )
+                    await send_telegram_message(tg_id=tg_row[0], text=message_text)
+                    logger.info(f"📧 Сообщение в Telegram отправлено пользователю {tg_row[0]}")
+                except Exception as tg_err:
+                    logger.error(f"❌ Ошибка отправки Telegram-сообщения: {tg_err}")
+
+            new_attempt.status = "success"
+            await db.commit()
+
+            return {
+                "status": "free_tariff",
+                "hiddify_uuid": hiddify_uuid,
+                "amount": new_attempt.amount,
+                "currency": new_attempt.currency,
+                "subscription_link": subscription_link,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "order_id": new_attempt.id  # можно удалить, если тикеты ищутся по hiddify_uuid
+            }
+        else:
+            new_attempt.status = "failed"
+            await db.commit()
+            return {
+                "status": "error",
+                "hiddify_uuid": hiddify_uuid,
+                "amount": new_attempt.amount,
+                "currency": new_attempt.currency,
+                "subscription_link": None,
+                "expires_at": None,
+                "order_id": new_attempt.id
+            }
+
+    # 4. Для платных тарифов (заглушка)
     return {
         "status": "success",
-        "order_id": new_attempt.id,
+        "hiddify_uuid": hiddify_uuid,
         "amount": new_attempt.amount,
-        "currency": new_attempt.currency
+        "currency": new_attempt.currency,
+        "subscription_link": None,
+        "expires_at": None,
+        "order_id": new_attempt.id
     }
 
 

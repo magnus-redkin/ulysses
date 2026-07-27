@@ -137,11 +137,21 @@ async def get_user_balance(
     except Exception as e:
         logger.error(f"❌ Hiddify API Error in user/balance: {e}")
 
+    domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
+    subscription_link = f"https://{domain}/subscription/{uuid}/#Ulysses" if uuid else None
+
     return {
         "status": "active" if is_active else "disabled",
         "email": email_db if email_db else "Бот (Без почты)",
-        "uuid": uuid, "traffic": traffic_data, "days_left": days_left, "is_active": is_active,
-        "admin_info": {"id": user_id, "tg_user_id": tg_id_db, "tg_username": tg_username_db}
+        "hiddify_uuid": uuid,
+        "traffic": traffic_data,
+        "days_left": days_left,
+        "is_active": is_active,
+        "tg_user_id": tg_id_db,
+        "tg_username": tg_username_db,
+        "db_id": user_id,
+        "subscription_link": subscription_link,
+        "expires_at": db_expires_at.isoformat() if db_expires_at else None
     }
 
 

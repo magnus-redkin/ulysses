@@ -7,6 +7,8 @@ from sqlalchemy import text
 from app.database import AsyncSessionLocal
 from app.services.hiddify_client import HiddifyProvisioner
 
+from .db_utils import find_user_by_identifier
+
 console = Console()
 
 def async_cmd(f):
@@ -39,16 +41,7 @@ async def user_create(tg_id, username):
     активирует 3-дневный триал и делает провижн на ноду Hiddify v2.
     """
     import uuid as uuid_lib
-    try:
-        from app.services.telegram_bot import send_telegram_message
-        # Если ваша функция лежит в другом месте, например в app/services/bot.py,
-        # то правильная строка будет: from app.services.bot import send_telegram_message
-    except ImportError:
-        try:
-            from app.services.bot import send_telegram_message
-        except ImportError:
-            send_telegram_message = None
-            console.print("[yellow]⚠️ Предупреждение: Модуль отправки ТГ-сообщений не найден. Пуш пропущен.[/yellow]")
+    from app.services.telegram_bot import send_telegram_message
 
     clean_username = username.lstrip("@").strip()
     new_uuid = str(uuid_lib.uuid4())
@@ -243,44 +236,33 @@ def user_delete(tg_id):
 # 🔗 КОМАНДА: ПОЛУЧИТЬ ССЫЛКУ ПОДПИСКИ (LINK)
 # ============================================================
 @user.command(name="link")
-@click.option("--tg-id", type=int, required=True, help="Telegram ID пользователя")
-def user_link(tg_id):
-    """Получить окончательную парадную ссылку подписки для существующего пользователя."""
+@click.argument("identifier")
+def user_link(identifier):
+    """Получить ссылку подписки для пользователя по любому идентификатору."""
     async def _get_user_link():
-        from sqlalchemy import text
         from app.database import AsyncSessionLocal
-
         async with AsyncSessionLocal() as session:
-            try:
-                # Ищем UUID пользователя по его Telegram ID
-                res = await session.execute(
-                    text("SELECT tg_username, hiddify_uuid FROM users WHERE tg_user_id = :tg_id"),
-                    {"tg_id": tg_id}
-                )
-                row = res.fetchone()
-
-                if not row:
-                    console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} не найден в базе биллинга![/red]")
-                    return
-
-                tg_username, hiddify_uuid = row
-
-                # Собираем эталонную парадную ссылку подписки
-                base_domain = "ulysses.best"
-                client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/#Ulysses"
-
-                console.print(f"\n[bold green]🔑 Сетевой паспорт пользователя успешно извлечен![/bold green]")
-                console.print(f"👤 Пользователь: [cyan]@{tg_username if tg_username else '—'}[/cyan] (TG ID: {tg_id})")
-                console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
-                console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT:[/bold magenta]")
-                console.print(f"[bold white on magenta]{client_sub_url}[/bold white on magenta]\n")
-
-
-            except Exception as err:
-                console.print(f"[red]❌ Ошибка при обращении к СУБД: {err}[/red]")
-
+            row = await find_user_by_identifier(session, identifier)
+            if not row:
+                console.print(f"[red]❌ Пользователь с идентификатором '{identifier}' не найден.[/red]")
+                return
+            tg_username, tg_user_id, hiddify_uuid, db_id = row
+            base_domain = "ulysses.best"
+            client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/#Ulysses"
+            console.print(f"\n[bold green]🔑 Сетевой паспорт пользователя успешно извлечен![/bold green]")
+            if tg_username:
+                console.print(f"👤 Пользователь: [cyan]@{tg_username}[/cyan]", end="")
+            else:
+                console.print(f"👤 Пользователь: [cyan]email?[/cyan]", end="")
+            if tg_user_id:
+                console.print(f" (TG ID: {tg_user_id})", end="")
+            console.print(f" (DB ID: {db_id})")
+            console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
+            console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT:[/bold magenta]")
+            console.print(f"[bold white on magenta]{client_sub_url}[/bold white on magenta]\n")
     import asyncio
     asyncio.run(_get_user_link())
+
 
 # ============================================================
 # 🔮 КОМАНДА: ИНСПЕКТОР СТРОК ПОДПИСКИ (USER JSON/TXT)
@@ -288,38 +270,40 @@ def user_link(tg_id):
 # Найти команду @user.command(name="json") в cli/user.py и заменить её внутреннюю часть:
 
 @user.command(name="json")
-@click.option("--tg-id", type=int, required=True, help="Telegram ID пользователя")
-def user_json(tg_id):
-    """Вывести на экран чистый структурированный JSON-конфиг Sing-box/Hiddify для пользователя."""
+@click.argument("identifier")
+def user_json(identifier):
+    """Вывести JSON-конфиг для пользователя по любому идентификатору."""
     import asyncio
     import json
     from app.database import AsyncSessionLocal
-    from sqlalchemy import text
-    from app.routers.sub_render import generate_singbox_json # Импортируем нашу фабрику структуры
+    from .db_utils import find_user_by_identifier
 
     async def _render_json():
         async with AsyncSessionLocal() as session:
-            sql = """
-                SELECT u.hiddify_uuid, s.status, s.expires_at
-                FROM users u
-                LEFT JOIN subscriptions s ON s.user_id = u.id
-                WHERE u.tg_user_id = :tg_id
-                ORDER BY s.expires_at DESC LIMIT 1
-            """
-            res = await session.execute(text(sql), {"tg_id": tg_id})
-            row = res.fetchone()
-
+            row = await find_user_by_identifier(session, identifier)
             if not row:
-                console.print(f"[red]❌ Ошибка: Пользователь с Telegram ID {tg_id} не найден в СУБД.[/red]")
+                console.print(f"[red]❌ Пользователь с идентификатором '{identifier}' не найден.[/red]")
                 return
+            tg_username, tg_user_id, hiddify_uuid, db_id = row
 
-            hiddify_uuid, status, expires_at = row
+            # Получаем статус подписки
+            sub_result = await session.execute(
+                text("SELECT status, expires_at FROM subscriptions WHERE user_id = :uid ORDER BY expires_at DESC LIMIT 1"),
+                {"uid": db_id}
+            )
+            sub_row = sub_result.fetchone()
+            status = sub_row[0] if sub_row else "unknown"
+            expires_at = sub_row[1] if sub_row else None
 
-            console.print(f"\n📋 [bold white]Профиль инспекции для TG ID {tg_id}:[/bold white]")
+            console.print(f"\n📋 [bold white]Профиль инспекции для '{identifier}':[/bold white]")
+            if tg_username:
+                console.print(f"   • TG: @{tg_username} (ID: {tg_user_id})")
+            else:
+                console.print(f"   • DB ID: {db_id}")
             console.print(f"   • Статус в БД: [{'green' if status == 'active' else 'red'}]{status}[/]")
             console.print(f"   • Ключ UUID: [cyan]{hiddify_uuid}[/cyan]\n")
 
-            # Генерируем JSON — теперь с await и передачей session
+            from app.routers.sub_render import generate_singbox_json
             json_config = await generate_singbox_json(str(hiddify_uuid), session)
 
             console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")

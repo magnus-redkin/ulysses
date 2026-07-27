@@ -8,6 +8,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from app.services.monitor import start_monitor_daemon
 
+import logging
+logging.getLogger("app.routers.billing").setLevel(logging.INFO)
+logging.getLogger("app.services.provisioning_manager").setLevel(logging.INFO)
+logging.getLogger("app.email_service").setLevel(logging.INFO)
+
 
 # Импорт новых изолированных модулей-роутеров
 from app.routers.bot import router as bot_router

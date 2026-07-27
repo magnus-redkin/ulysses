@@ -127,10 +127,12 @@ class HiddifyProvisioner:
                 # 🟢 ИСПРАВЛЕНО: Используем готовый self.headers без AttributeError
                 response = await client.delete(target_url, headers=self.headers)
 
-                if response.status_code == 200 or response.status_code == 204:
-                    logger.info(f"✅ [HIDDIFY CLIENT] Пользователь {clean_uuid} успешно стерт из HFM.")
-                    # Синхронно заставляем Xray обновить таблицы маршрутов
-                    await self.apply_config()
+                if response.status_code in (200, 204, 404):
+                    if response.status_code == 404:
+                        logger.info(f"ℹ️ [HIDDIFY CLIENT] Пользователь {clean_uuid} уже отсутствует на HFM (404).")
+                    else:
+                        logger.info(f"✅ [HIDDIFY CLIENT] Пользователь {clean_uuid} успешно стерт из HFM.")
+                        await self.apply_config()
                     return True
 
                 logger.error(f"❌ [HIDDIFY API] Ошибка удаления {clean_uuid}: Статус {response.status_code}")

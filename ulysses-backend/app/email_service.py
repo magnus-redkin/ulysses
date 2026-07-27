@@ -143,196 +143,71 @@ class EmailService:
             # Восстанавливаем оригинальный getaddrinfo
             socket.getaddrinfo = original_getaddrinfo
 
-#     def get_welcome_email_real(self, to_email: str, hiddify_uuid: str) -> tuple:
-#         """
-#         Приветственное письмо после активации подписки.
 
-#         Args:
-#             to_email: Email пользователя
-#             hiddify_uuid: UUID для подключения к VPN
-
-#         Returns:
-#             tuple: (subject, html_body, text_body)
-#         """
-#         subscription_link = f"https://vpn.ulysses.best/N0G5SfPATJC3UwW5TRa4tYHUxoMCqk/{hiddify_uuid}/#{to_email}"
-#         account_link = f"https://ulysses.best/users/{hiddify_uuid}/"
-#         telegram_link = f"https://t.me/ulysses_vpn_bot?start={hiddify_uuid}"
-
-#         subject = "🚀 Ваш доступ к Ulysses VPN успешно активирован!"
-
-#         html_body = f"""
-#         <!DOCTYPE html>
-#         <html lang="ru">
-#             <head><meta charset="UTF-8"></head>
-#             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-#                 <h2 style="color: #2b6cb0;">Добро пожаловать в Лабораторию Улисс!</h2>
-#                 <p>Оплата прошла успешно. Ваш персональный защищенный туннель полностью готов к работе.</p>
-
-#                 <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin: 20px 0;">
-#                     <h3 style="margin-top: 0; color: #166534;">🔗 Ссылка для подключения</h3>
-#                     <p style="color: #166534; font-size: 14px;">Скопируйте эту ссылку и вставьте в приложение Hiddify:</p>
-#                     <div style="background: white; border: 1px solid #86efac; border-radius: 4px; padding: 12px; word-break: break-all; font-family: monospace; font-size: 13px; color: #166534; margin-bottom: 10px;">
-#                         {subscription_link}
-#                     </div>
-#                 </div>
-
-#                 <div style="background-color: #f7fafc; border-left: 4px solid #2b6cb0; padding: 15px; margin: 20px 0;">
-#                     <h3 style="margin-top: 0;">📋 Быстрый старт за 2 минуты:</h3>
-#                     <ol style="padding-left: 20px;">
-#                         <li style="margin-bottom: 10px;">Скопируйте ссылку подключения выше</li>
-#                         <li style="margin-bottom: 10px;">Скачайте приложение <strong>Hiddify App</strong></li>
-#                         <li style="margin-bottom: 10px;">Вставьте ссылку в поле "Добавить подписку"</li>
-#                     </ol>
-#                 </div>
-
-#                 <div style="background-color: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 20px; margin: 20px 0;">
-#                     <h3 style="margin-top: 0; color: #1e40af;">📊 Ваш личный кабинет</h3>
-#                     <p style="color: #1e40af; font-size: 14px;">Информация о подписке доступна по ссылке:</p>
-#                     <a href="{account_link}" style="color: #2563eb; word-break: break-all;">{account_link}</a>
-#                 </div>
-
-#                 <div style="background-color: #f0f9ff; border: 1px solid #38bdf8; border-radius: 8px; padding: 20px; margin: 20px 0;">
-#                     <h3 style="margin-top: 0; color: #0369a1;">🤖 Telegram бот</h3>
-#                     <p style="color: #0369a1; font-size: 14px;">Привяжите подписку к Telegram для быстрой проверки баланса:</p>
-#                     <a href="{telegram_link}" style="color: #0284c7;">{telegram_link}</a>
-#                 </div>
-
-#                 <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-#                 <p style="font-size: 12px; color: #718096; text-align: center;">
-#                     Ulysses Lab © 2024-2026<br>
-#                     Нужна помощь? Telegram: @ulysses_vpn_bot
-#                 </p>
-#             </body>
-#         </html>
-#         """
-
-#         text_body = f"""Добро пожаловать в Ulysses Lab!
-
-# Оплата прошла успешно. Ваш персональный защищенный туннель готов к работе.
-
-# 🔗 Ссылка для подключения (скопируйте и вставьте в Hiddify App):
-# {subscription_link}
-
-# 📊 Личный кабинет:
-# {account_link}
-
-# 🤖 Telegram бот:
-# {telegram_link}
-
-# 📋 Быстрый старт:
-# 1. Скопируйте ссылку подключения выше
-# 2. Скачайте Hiddify App
-# 3. Вставьте ссылку в поле "Добавить подписку"
-
-# 💡 Нужна помощь? Telegram: @ulysses_vpn_bot
-# """
-
-#         return subject, html_body, text_body
-
-    # def get_expiring_email(self, to_email: str, days_left: int) -> tuple:
-    #     """
-    #     Письмо с предупреждением об истечении подписки.
-
-    #     Args:
-    #         to_email: Email пользователя
-    #         days_left: Осталось дней
-
-    #     Returns:
-    #         tuple: (subject, html_body, text_body)
-    #     """
-    #     if days_left == 1:
-    #         day_word = "день"
-    #     elif 2 <= days_left <= 4:
-    #         day_word = "дня"
-    #     else:
-    #         day_word = "дней"
-
-    #     subject = f"⏳ Подписка Ulysses VPN истекает через {days_left} {day_word}"
-
-    #     html_body = f"""
-    #     <!DOCTYPE html>
-    #     <html lang="ru">
-    #         <head><meta charset="UTF-8"></head>
-    #         <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-    #             <h2 style="color: #d97706;">⚠️ Подписка скоро истекает</h2>
-    #             <p>Ваша подписка на Ulysses VPN истекает через <strong>{days_left} {day_word}</strong>.</p>
-    #             <p>Чтобы не остаться без защиты, продлите подписку:</p>
-    #             <a href="https://ulysses.best" style="display: inline-block; background: #d97706; color: white; padding: 12px 24px; border-radius: 4px; text-decoration: none;">Продлить подписку</a>
-    #             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-    #             <p style="font-size: 12px; color: #718096; text-align: center;">
-    #                 Ulysses Lab © 2024-2026<br>
-    #                 Нужна помощь? Telegram: @ulysses_vpn_bot
-    #             </p>
-    #         </body>
-    #     </html>
-    #     """
-
-    #     text_body = f"Ваша подписка Ulysses VPN истекает через {days_left} {day_word}.\nПродлите: https://ulysses.best"
-
-    #     return subject, html_body, text_body
 
     def get_welcome_email(self, to_email: str, hiddify_uuid: str) -> tuple:
         """
         Приветственное письмо после активации подписки.
-
-        Args:
-            to_email: Email пользователя
-
-        Returns:
-            tuple: (subject, html_body, text_body)
         """
-        subscription_link = f"https://ulysses.best/#{to_email}"
+        domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
+
+        subscription_link = f"https://{domain}/X6CbExbUw2/sub/{hiddify_uuid}/"
         account_link = f"https://ulysses.best/users/"
         telegram_link = f"https://t.me/ulysses_support_bot"
 
         subject = "🚀 Ваш доступ к Ulysses Lab успешно активирован!"
 
         html_body = f"""
-        <!DOCTYPE html>
-        <html lang="ru">
-            <head><meta charset="UTF-8"></head>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2b6cb0;">Добро пожаловать в Лабораторию Улисс!</h2>
-                <p>Оплата прошла успешно. </p>
+    <!DOCTYPE html>
+    <html lang="ru">
+        <head><meta charset="UTF-8"></head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #2b6cb0;">Добро пожаловать в Лабораторию Улисс!</h2>
+            <p>Ваш бесплатный тест-драйв активирован.</p>
 
-                <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #166534;">🔗 Ссылка для подключения</h3>
-                    <p style="color: #166534; font-size: 14px;">Скопируйте эту ссылку и вставьте в приложение:</p>
-                    <div style="background: white; border: 1px solid #86efac; border-radius: 4px; padding: 12px; word-break: break-all; font-family: monospace; font-size: 13px; color: #166534; margin-bottom: 10px;">
-                        {subscription_link}
-                    </div>
+            <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                <h3 style="margin-top: 0; color: #166534;">🔗 Ссылка для подключения</h3>
+                <p style="color: #166534; font-size: 14px;">Скопируйте эту ссылку и вставьте в приложение Hiddify Next:</p>
+                <div style="background: white; border: 1px solid #86efac; border-radius: 4px; padding: 12px; word-break: break-all; font-family: monospace; font-size: 13px; color: #166534; margin-bottom: 10px;">
+                    {subscription_link}
                 </div>
+            </div>
 
-                <div style="background-color: #f7fafc; border-left: 4px solid #2b6cb0; padding: 15px; margin: 20px 0;">
-                    <h3 style="margin-top: 0;">📋 Быстрый старт за 2 минуты:</h3>
-                </div>
+            <div style="background-color: #f7fafc; border-left: 4px solid #2b6cb0; padding: 15px; margin: 20px 0;">
+                <h3 style="margin-top: 0;">📋 Быстрый старт за 2 минуты:</h3>
+                <ol style="padding-left: 20px;">
+                    <li>Скопируйте ссылку подключения выше</li>
+                    <li>Скачайте приложение <strong>Hiddify Next</strong></li>
+                    <li>Вставьте ссылку в поле "Добавить подписку"</li>
+                </ol>
+            </div>
 
-                <div style="background-color: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #1e40af;">📊 Ваш личный кабинет</h3>
-                    <p style="color: #1e40af; font-size: 14px;">Информация о подписке доступна по ссылке:</p>
-                    <a href="{account_link}" style="color: #2563eb; word-break: break-all;">{account_link}</a>
-                </div>
+            <div style="background-color: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                <h3 style="margin-top: 0; color: #1e40af;">📊 Ваш личный кабинет</h3>
+                <p style="color: #1e40af; font-size: 14px;">Информация о подписке доступна по ссылке:</p>
+                <a href="{account_link}" style="color: #2563eb; word-break: break-all;">{account_link}</a>
+            </div>
 
-                <div style="background-color: #f0f9ff; border: 1px solid #38bdf8; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #0369a1;">🤖 Telegram бот</h3>
-                    <p style="color: #0369a1; font-size: 14px;">Привяжите подписку к Telegram для быстрой проверки баланса:</p>
-                    <a href="{telegram_link}" style="color: #0284c7;">{telegram_link}</a>
-                </div>
+            <div style="background-color: #f0f9ff; border: 1px solid #38bdf8; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                <h3 style="margin-top: 0; color: #0369a1;">🤖 Telegram бот</h3>
+                <p style="color: #0369a1; font-size: 14px;">Привяжите подписку к Telegram для быстрой проверки баланса:</p>
+                <a href="{telegram_link}" style="color: #0284c7;">{telegram_link}</a>
+            </div>
 
-                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-                <p style="font-size: 12px; color: #718096; text-align: center;">
-                    Ulysses Lab © 2024-2026<br>
-                    Нужна помощь? Telegram: @ulysses_support_bot
-                </p>
-            </body>
-        </html>
-        """
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;">
+            <p style="font-size: 12px; color: #718096; text-align: center;">
+                Ulysses Lab © 2024-2026<br>
+                Нужна помощь? Telegram: @ulysses_support_bot
+            </p>
+        </body>
+    </html>
+    """
 
         text_body = f"""Добро пожаловать в Ulysses Lab!
 
-Оплата прошла успешно.
+Ваш бесплатный тест-драйв активирован.
 
-🔗 Ссылка для подключения (скопируйте и вставьте в приложение):
+🔗 Ссылка для подключения (скопируйте и вставьте в Hiddify Next):
 {subscription_link}
 
 📊 Личный кабинет:
@@ -343,12 +218,14 @@ class EmailService:
 
 📋 Быстрый старт:
 1. Скопируйте ссылку подключения выше
-2. Вставьте ссылку в поле "Добавить подписку"
+2. Скачайте Hiddify Next
+3. Вставьте ссылку в поле "Добавить подписку"
 
 💡 Нужна помощь? Telegram: @ulysses_support_bot
 """
 
         return subject, html_body, text_body
+
 
     def get_expiring_email(self, to_email: str, days_left: int) -> tuple:
         """

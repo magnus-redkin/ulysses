@@ -14,7 +14,7 @@ env_paths = [
 for env_path in env_paths:
     if env_path.exists():
         load_dotenv(env_path)
-        print(f"📂 Загружен .env из: {env_path}")
+        # print(f"📂 Загружен .env из: {env_path}")
         break
 
 class Settings(BaseSettings):
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Отладочный вывод
-print(f"🔧 Конфигурация загружена:")
-print(f"   DB: {settings.DB_USER}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
-print(f"   DB_PASS: {'✅ установлен' if settings.DB_PASS else '❌ ОТСУТСТВУЕТ!'}")
-print(f"   ENV: {settings.ENVIRONMENT}")
+# print(f"🔧 Конфигурация загружена:")
+# print(f"   DB: {settings.DB_USER}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+# print(f"   DB_PASS: {'✅ установлен' if settings.DB_PASS else '❌ ОТСУТСТВУЕТ!'}")
+# print(f"   ENV: {settings.ENVIRONMENT}")

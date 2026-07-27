@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.services.hiddify_client import HiddifyProvisioner
 from app.bot_messages import get_message
+from app.email_service import email_service
 
 logger = logging.getLogger(__name__)
 
@@ -335,3 +336,103 @@ actions = {
     "show_rules": _action_show_rules,
     "show_support": _action_show_support,
 }
+
+
+async def activate_free_subscription(db: AsyncSession, email: str, tariff_slug: str) -> bool:
+    """Активировать бесплатный тариф для пользователя по email."""
+
+    # 1. Проверить, не активирован ли уже sub_free для этого email
+    res = await db.execute(text("""
+        SELECT s.id FROM subscriptions s
+        JOIN users u ON s.user_id = u.id
+        WHERE u.email = :email AND s.tariff_slug = 'sub_free'
+    """), {"email": email})
+    existing_sub = res.fetchone()
+
+    if existing_sub:
+        logger.warning(f"Повторная попытка активации sub_free для {email}")
+
+        # Обновим статус инвойса, если он был создан
+        await db.execute(text("UPDATE payment_attempts SET status = 'success' WHERE email = :email AND tariff_slug = 'sub_free' AND status = 'pending'"), {"email": email})
+        await db.commit()
+
+        # Отправка письма даже при повторной активации
+        try:
+            user_res = await db.execute(text("SELECT hiddify_uuid FROM users WHERE email = :email"), {"email": email})
+            user_row = user_res.fetchone()
+            if user_row:
+                hiddify_uuid = user_row[0]
+                from app.email_service import email_service as mail_svc
+                subject, html_body, text_body = mail_svc.get_welcome_email(email, hiddify_uuid)
+                await mail_svc.send_email(email, subject, html_body, text_body)
+                logger.info(f"📧 Письмо отправлено на {email} (повторная активация)")
+        except Exception as email_err:
+            logger.error(f"❌ Ошибка отправки письма для {email}: {email_err}")
+
+        return True
+
+    # 2. Найти или создать пользователя
+    user_res = await db.execute(text("SELECT id, hiddify_uuid FROM users WHERE email = :email"), {"email": email})
+    user_row = user_res.fetchone()
+
+    if user_row:
+        user_id, hiddify_uuid = user_row
+    else:
+        hiddify_uuid = str(uuid_lib.uuid4())
+        try:
+            sql_user = """
+                INSERT INTO users (email, hiddify_uuid, created_at, updated_at)
+                VALUES (:email, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+            """
+            res_user = await db.execute(text(sql_user), {"email": email, "uuid": hiddify_uuid})
+            user_id = res_user.scalar_one()
+            await db.commit()
+        except Exception as e:
+            return False
+
+    # 3. Создать подписку
+    days = 3  # из tariffs.json
+    expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+    sql_sub = """
+        INSERT INTO subscriptions (user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at)
+        VALUES (:user_id, :tariff, 'provisioning', 'main', CURRENT_TIMESTAMP, :expires, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+    """
+    res_sub = await db.execute(text(sql_sub), {
+        "user_id": user_id,
+        "tariff": tariff_slug,
+        "expires": expires_at
+    })
+    sub_id = res_sub.scalar_one()
+    await db.commit()
+
+    # 4. Провижн на HFM
+    try:
+        provisioner = HiddifyProvisioner()
+        success = await provisioner.create_user(uuid=hiddify_uuid, name=email.split("@")[0][:30])
+        if success:
+            await db.execute(text("UPDATE subscriptions SET status = 'active', activated_at = CURRENT_TIMESTAMP WHERE id = :sub_id"), {"sub_id": sub_id})
+            await db.commit()
+            logger.info(f"✅ Бесплатный тариф активирован для {email}")
+
+            # Отправка приветственного письма
+            try:
+                from app.email_service import email_service as mail_svc
+                subject, html_body, text_body = mail_svc.get_welcome_email(email, hiddify_uuid)
+                await mail_svc.send_email(email, subject, html_body, text_body)
+                logger.info(f"📧 Письмо отправлено на {email}")
+            except Exception as email_err:
+                logger.error(f"❌ Ошибка отправки письма для {email}: {email_err}")
+
+            return True
+        else:
+            await db.execute(text("UPDATE subscriptions SET provisioning_error = 'HFM API error' WHERE id = :sub_id"), {"sub_id": sub_id})
+            await db.commit()
+            logger.error(f"❌ HFM отклонил создание для {email}")
+            return False
+    except Exception as e:
+        await db.execute(text("UPDATE subscriptions SET provisioning_error = :err WHERE id = :sub_id"), {"sub_id": sub_id, "err": str(e)[:200]})
+        await db.commit()
+        logger.error(f"❌ Ошибка провижна для {email}: {e}")
+        return False

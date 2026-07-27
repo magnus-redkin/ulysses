@@ -265,106 +265,6 @@ def sub_active(tg_id, tariff, days):
 
     asyncio.run(_active())
 
-# ========================
-
-
-@sub.command(name="pending")
-@click.option("--user-id", type=int, help="ID пользователя из таблицы users (для создания)")
-@click.option("--tariff", default="premium_1m", help="Слаг тарифа для новой тестовой записи")
-@click.option("--error", default="Hiddify API Connection Refused (Timeout)", help="Текст искусственной ошибки ноды")
-@click.option("--attempts", type=int, default=1, help="Количество неудачных попыток")
-@click.option("--create", is_flag=True, help="Активировать режим моделирования новой ошибки")
-def sub_pending(user_id, tariff, error, attempts, create):
-    """Показать зависшие подписки или смоделировать новую проблему для тестов.
-
-    Без флагов — выводит список всех подписок со статусом 'provisioning'.\n
-    Пример: uadmin sub pending\n
-    С флагом --create — моделирует аварийную запись: uadmin sub pending --create --user-id 148
-    """
-    async def _pending_logic():
-        async with AsyncSessionLocal() as session:
-
-            # РЕЖИМ 1: Моделирование новой зависшей подписки
-            if create:
-                if not user_id:
-                    raise click.UsageError("❌ Ошибка: для режима создания необходимо указать --user-id")
-
-                res = await session.execute(text("SELECT id FROM users WHERE id = :id"), {"id": user_id})
-                if not res.fetchone():
-                    console.print(f"[red]❌ Ошибка: Пользователь с ID {user_id} не найден.[/red]")
-                    return
-
-                now = datetime.now(timezone.utc)
-                sql_insert = """
-                    INSERT INTO subscriptions (
-                        user_id, tariff_slug, status, node_id,
-                        provisioning_attempts, last_provisioning_at, provisioning_error, created_at, updated_at
-                    )
-                    VALUES (
-                        :user_id, :tariff, 'provisioning', 'main',
-                        :attempts, :now, :error, :now, :now
-                    )
-                    RETURNING id
-                """
-                res_insert = await session.execute(text(sql_insert), {
-                    "user_id": user_id, "tariff": tariff, "attempts": attempts, "error": error, "now": now
-                })
-                await session.commit()
-                new_sub_id = res_insert.scalar_one()
-
-                console.print(f"[yellow]⚠️ Успешно смоделирована зависшая подписка! ID подписки: {new_sub_id}[/yellow]")
-                console.print(f"➜ Статус: [magenta]provisioning[/magenta] | Попыток: {attempts} | Ошибка: [red]{error}[/red]")
-                return
-
-            # РЕЖИМ 2: Вывод всех зависших подписок по умолчанию
-            sql_select = """
-                SELECT s.id, u.tg_user_id, u.tg_username, u.email,
-                       s.tariff_slug, s.provisioning_attempts, s.provisioning_error, s.created_at
-                FROM subscriptions s
-                JOIN users u ON s.user_id = u.id
-                WHERE s.status = 'provisioning'
-                ORDER BY s.id DESC
-            """
-            try:
-                result = await session.execute(text(sql_select))
-                rows = list(result.fetchall())  # Явно приводим к обычному list
-
-                # Жесткая и надежная проверка на пустоту списка
-                if len(rows) == 0:
-                    console.print("\n[green]✅ Зависших подписок (provisioning) в системе не обнаружено.[/green]\n")
-                    return
-
-                table = Table(title="🚨 Зависшие подписки в обработке")
-                table.add_column("Sub ID", style="dim", justify="center")
-                table.add_column("Пользователь (Контакты)", style="cyan")
-                table.add_column("Тариф", style="blue")
-                table.add_column("Попыток", style="yellow", justify="center")
-                table.add_column("Текст ошибки ноды", style="red")
-                table.add_column("Создана", style="dim")
-
-                for r in rows:
-                    s_id, tg_id, username, email, tariff_slug, atts, err, created_at = r
-
-                    contact_parts = []
-                    if tg_id: contact_parts.append(f"TG: {tg_id}")
-                    if username: contact_parts.append(f"@{username}")
-                    if email and not email.endswith("@ulysses.internal"): contact_parts.append(email)
-                    contact_str = " | ".join(contact_parts) if contact_parts else "Анонимный профиль"
-
-                    created_str = created_at.strftime("%Y-%m-%d %H:%M") if created_at else "-"
-
-                    table.add_row(
-                        str(s_id), contact_str, tariff_slug, str(atts or 0),
-                        str(err or "Ожидает выдачи"), created_str
-                    )
-                console.print(table)
-                console.print("[yellow]➜ Подсказка: Вы можете протолкнуть их командой: uadmin fix pending --force[/yellow]")
-
-            except Exception as select_err:
-                console.print(f"[red]❌ Ошибка при чтении из СУБД: {select_err}[/red]")
-
-    asyncio.run(_pending_logic())
-
 
 
 @sub.command(name="revoke")
@@ -427,6 +327,9 @@ def sub_revoke(user_id):
 
 # ============================================================
 # 👻 КОМАНДА: БИТЫЕ ПРОФИЛИ БЕЗ ПОДПИСОК (ORPHANS)
+# Типичный пример: юзер создан в БД (через бота или веб), но подписка не активировалась.
+# Причины: сбой HFM API, ошибка активации, ручное вмешательство, старый баг.
+# Пример: TG ID 8397318328 (@magnusfredkin) — есть в users, нет в subscriptions.
 # ============================================================
 @sub.command(name="orphans")
 def sub_orphans():
@@ -478,3 +381,143 @@ def sub_orphans():
                 console.print(f"[red]❌ Ошибка при поиске битых профилей: {err}[/red]")
 
     asyncio.run(_find_orphans())
+
+# ======================================================================
+# КОМАНДА: ОЧИСТКА ЗАВИСШИХ ИНВОЙСОВ (CLEANUP)
+# Типичный пример: юзер заполнил форму на сайте, создался инвойс, но оплата не прошла.
+# Для sub_free — это баг (должен активироваться сразу).
+# Для платных — юзер просто не оплатил (нормально, удаляем только старые).
+# Пример: magnus.redkin@mailfence.com (sub_free, pending с 26.07.2026)
+# ======================================================================
+@sub.command(name="cleanup")
+@click.option("--days", type=int, default=7, help="Удалить инвойсы старше N дней")
+@click.option("--free-only", is_flag=True, default=True, help="Только бесплатные тарифы (sub_free)")
+@click.option("--all", "clean_all", is_flag=True, help="Удалить все pending инвойсы (включая платные)")
+@click.option("--dry-run", is_flag=True, help="Только показать, без удаления")
+def sub_cleanup(days, free_only, clean_all, dry_run):
+    """Удалить старые незавершённые платёжки.
+
+    uadmin sub cleanup                   — удалить sub_free старше 7 дней
+    uadmin sub cleanup --days 30         — старше 30 дней
+    uadmin sub cleanup --all             — все pending (включая платные)
+    uadmin sub cleanup --dry-run         — только показать
+    """
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            filters = ["status = 'pending'"]
+            if not clean_all:
+                filters.append("tariff_slug = 'sub_free'")
+            filters.append(f"created_at < NOW() - INTERVAL '{days} days'")
+            where = " AND ".join(filters)
+
+            if dry_run:
+                result = await session.execute(text(f"SELECT id, email, tariff_slug, created_at FROM payment_attempts WHERE {where} ORDER BY created_at"))
+                rows = list(result.fetchall())
+                console.print(f"[dim]Найдено {len(rows)} инвойсов для удаления:[/dim]")
+                for r in rows:
+                    console.print(f"  {r[0]} | {r[1]} | {r[2]} | {r[3]}")
+                return
+
+            result = await session.execute(text(f"DELETE FROM payment_attempts WHERE {where}"))
+            await session.commit()
+            console.print(f"[green]✅ Удалено {result.rowcount} инвойсов.[/green]")
+
+    asyncio.run(_run())
+
+
+# ======================================================================
+# КОМАНДА: ЗАВИСШИЕ АКТИВАЦИИ (STUCK)
+#     Подписка создана в БД (subscriptions), но не активирована на HFM.
+#     Статус: subscriptions.status = 'provisioning'
+#     В поле provisioning_error записана причина сбоя.
+#
+#     Как возникает:
+#     1. Бэкенд создал подписку в БД
+#     2. Отправил запрос к HFM API на создание пользователя
+#     3. HFM API не ответил (timeout) или вернул ошибку (500, 403, etc)
+#     4. Подписка осталась в статусе provisioning
+#
+#     Причины:
+#     - HFM перегружен или недоступен (сеть, ребут)
+#     - Неверный UUID или конфликт пользователей
+#     - Баг в коде активации (не обработал ответ HFM)
+#     - Ручное вмешательство (удалили юзера на HFM, в БД остался)
+#
+#     Решение:
+#     uadmin fix pending --force  — повторно протолкнуть активацию
+#     uadmin sub active --tg-id X — активировать вручную
+# ======================================================================
+
+@sub.command(name="stuck")
+def sub_stuck():
+    """Показать подписки в статусе provisioning (зависшие активации)."""
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT s.id, u.tg_user_id, u.tg_username, u.email,
+                       s.tariff_slug, s.provisioning_attempts, s.provisioning_error, s.created_at
+                FROM subscriptions s
+                JOIN users u ON s.user_id = u.id
+                WHERE s.status = 'provisioning'
+                ORDER BY s.id DESC
+            """))
+            rows = list(result.fetchall())
+            if not rows:
+                console.print("\n[green]✅ Зависших активаций нет.[/green]\n")
+                return
+            table = Table(title="🚨 Зависшие активации (provisioning)")
+            table.add_column("Sub ID", style="dim")
+            table.add_column("Пользователь", style="cyan")
+            table.add_column("Тариф", style="blue")
+            table.add_column("Попыток", style="yellow")
+            table.add_column("Ошибка", style="red")
+            table.add_column("Создана", style="dim")
+            for r in rows:
+                s_id, tg_id, username, email, tariff_slug, atts, err, created_at = r
+                parts = []
+                if tg_id: parts.append(f"TG:{tg_id}")
+                if username: parts.append(f"@{username}")
+                if email and not email.endswith("@ulysses.internal"): parts.append(email)
+                contact = " | ".join(parts) if parts else "—"
+                table.add_row(str(s_id), contact, tariff_slug, str(atts or 0),
+                              str(err or "—"), str(created_at))
+            console.print(table)
+    asyncio.run(_run())
+
+
+# ======================================================================
+# КОМАНДА: НЕЗАВЕРШЁННЫЕ ПЛАТЕЖИ (PENDING)
+#     Юзер нажал "Оплатить" → создался payment_attempts.status = 'pending'
+#     Фронтенд показал страницу оплаты (если Платега) или QR/реквизиты
+#     Юзер оплатил → Платега присылает webhook → статус меняется на success → активируется подписка
+# == pending означает что webhook от Платеги не пришёл. Причины:
+#     Юзер не оплатил (нормально)
+#     Юзер оплатил, но Платега не прислала webhook (баг/сбой)
+#     Webhook пришёл, но наш бэкенд не обработал (баг)
+# ======================================================================
+@sub.command(name="pending")
+def sub_pending():
+    """Показать незавершённые платёжки (payment_attempts.status = 'pending')."""
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT id, email, tariff_slug, amount, created_at
+                FROM payment_attempts
+                WHERE status = 'pending'
+                ORDER BY created_at DESC
+            """))
+            rows = list(result.fetchall())
+            if not rows:
+                console.print("\n[green]✅ Незавершённых платежей нет.[/green]\n")
+                return
+            table = Table(title="💳 Незавершённые платежи (pending)")
+            table.add_column("Invoice ID", style="dim")
+            table.add_column("Email", style="cyan")
+            table.add_column("Тариф", style="blue")
+            table.add_column("Сумма", style="green")
+            table.add_column("Создан", style="dim")
+            for p in rows:
+                table.add_row(str(p[0]), p[1] or "—", p[2], str(p[3]), str(p[4]))
+            console.print(table)
+            console.print("[dim]Эти платежи ожидают оплаты. Для sub_free это баг — используйте uadmin sub cleanup.[/dim]")
+    asyncio.run(_run())

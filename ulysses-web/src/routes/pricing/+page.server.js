@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { fail, redirect, isRedirect } from '@sveltejs/kit';
 
 const BACKEND_URL = 'http://localhost:8000';
 
@@ -43,19 +43,10 @@ export const actions = {
     }
 
     try {
-      const backendUrl = `${BACKEND_URL}/api/billing/create-invoice`;
-
-      console.log(`Sending request to backend: ${backendUrl}`);
-
-      const response = await fetch(backendUrl, {
+      const response = await fetch(`${BACKEND_URL}/api/billing/create-invoice`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: String(email),
-          tariff_slug: String(plan)
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: String(email), tariff_slug: String(plan) })
       });
 
       if (!response.ok) {
@@ -65,17 +56,22 @@ export const actions = {
 
       const result = await response.json();
 
-      console.log('Backend response received in SvelteKit:', result);
+      // Если статус подразумевает успешное создание подписки
+      if (result.status === 'free_tariff' || result.status === 'success') {
+        // Перенаправляем на персональную страницу
+        let uuid = result.hiddify_uuid;
+        if (!uuid) {
+          return fail(500, { error: 'No account identifier returned from backend' });
+        }
+        throw redirect(302, `/account/${uuid}`);
+      }
 
-      return {
-        success: true,
-        message: 'Счет успешно создан / Invoice created',
-        order_id: result.order_id,
-        amount: result.amount
-      };
+      // Если ошибка – возвращаем форму с ошибкой
+      return fail(500, { error: result.detail || 'Subscription creation failed' });
 
     } catch (err) {
-      console.error('Backend connection error in SvelteKit:', err);
+      if (isRedirect(err)) throw err; // ← заменили instanceof на isRedirect
+      console.error('Backend connection error:', err);
       return fail(500, { error: 'Internal server error: backend is unreachable' });
     }
   }
