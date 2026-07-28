@@ -181,6 +181,8 @@ async def _action_check_balance(tg_user_id: int, data: dict, db: AsyncSession, b
 # ЧАСТЬ 3: АКТИВАЦИЯ И ПОКУПКА ТАРИФОВ
 # ============================================================
 
+
+
 async def _action_buy_tariff(tg_user_id: int, data: dict, db: AsyncSession, background_tasks: BackgroundTasks) -> dict:
     """
     💰 ИСПРАВЛЕННЫЙ МУЛЬТИВАЛЮТНЫЙ ОБРАБОТЧИК КЛИКА ПО ТАРИФУ
@@ -208,32 +210,32 @@ async def _action_buy_tariff(tg_user_id: int, data: dict, db: AsyncSession, back
     # -----------------------------------------------------------------
     # РЕЖИМ А: БЕСПЛАТНЫЙ ТАРИФ (Мгновенная автоактивация)
     # -----------------------------------------------------------------
-    if tariff_slug == "sub_free" or amount == 0.00:
-        logger.info(f"🎁 [MANAGER] Выдача бесплатного триала для TG={tg_user_id}...")
+    # Вызываем общую функцию активации (она создаст пользователя и подписку, если нужно)
+    email = f"tg_{tg_user_id}@ulysses.internal"
+    success = await activate_free_subscription(db, email, tariff_slug)
 
-        # Проверяем, не брал ли юзер триал ранее, чтобы исключить злоупотребления
-        res_check = await db.execute(text("""
-            SELECT s.id FROM subscriptions s
-            JOIN users u ON s.user_id = u.id
-            WHERE u.tg_user_id = :tg_id AND s.tariff_slug = 'sub_free'
-        """), {"tg_id": tg_user_id})
+    if success:
+        uuid_res = await db.execute(text("SELECT hiddify_uuid FROM users WHERE tg_user_id = :tg_id"), {"tg_id": tg_user_id})
+        uuid_row = uuid_res.fetchone()
+        hiddify_uuid = str(uuid_row[0]) if uuid_row else None
 
-        if res_check.fetchone():
-            return {
-                "state": "error",
-                "message": "⚠️ <b>Вы уже использовали бесплатный тест-драйв!</b>\n\nПожалуйста, выберите любой платный тарифный план для продления подписки Ulysses VPN.",
-                "keyboard": "tariffs"
-            }
+        # Срок действия всегда 3 дня от текущего момента
+        from datetime import timedelta
+        expires_at = datetime.now(timezone.utc) + timedelta(days=3)
+        expires_str = expires_at.strftime('%Y-%m-%d %H:%M')
 
-        # Логика выдачи триала через фоновый воркер (как у вас и было настроено)
-        from app.tasks.workers import provision_and_notify
-        # (Здесь идет ваш существующий код создания бесплатной записи в subscriptions)
+        domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
+        subscription_link = f"https://{domain}/X6CbExbUw2/sub/{hiddify_uuid}/"
 
+        message = get_message("free_activated", subscription_link=subscription_link, expires=expires_str)
+        return {"state": "info", "message": message, "keyboard": "back"}
+    else:
         return {
-            "state": "info",
-            "message": "🎁 <b>Запрос успешно принят в обработку!</b>\n\n⚙️ Наш кластер настраивает ваш триал на 3 дня...",
+            "state": "error",
+            "message": get_message("error_api"),
             "keyboard": "back"
         }
+
 
     # -----------------------------------------------------------------
     # РЕЖИМ Б: ПЛАТНЫЕ ТАРИФЫ (Генерация мультивалютных ссылок через Platega SDK)
@@ -338,61 +340,61 @@ actions = {
 }
 
 
-async def activate_free_subscription(db: AsyncSession, email: str, tariff_slug: str) -> bool:
-    """Активировать бесплатный тариф для пользователя по email."""
-
-    # 1. Проверить, не активирован ли уже sub_free для этого email
-    res = await db.execute(text("""
-        SELECT s.id FROM subscriptions s
-        JOIN users u ON s.user_id = u.id
-        WHERE u.email = :email AND s.tariff_slug = 'sub_free'
-    """), {"email": email})
-    existing_sub = res.fetchone()
-
-    if existing_sub:
-        logger.warning(f"Повторная попытка активации sub_free для {email}")
-
-        # Обновим статус инвойса, если он был создан
-        await db.execute(text("UPDATE payment_attempts SET status = 'success' WHERE email = :email AND tariff_slug = 'sub_free' AND status = 'pending'"), {"email": email})
-        await db.commit()
-
-        # Отправка письма даже при повторной активации
-        try:
-            user_res = await db.execute(text("SELECT hiddify_uuid FROM users WHERE email = :email"), {"email": email})
-            user_row = user_res.fetchone()
-            if user_row:
-                hiddify_uuid = user_row[0]
-                from app.email_service import email_service as mail_svc
-                subject, html_body, text_body = mail_svc.get_welcome_email(email, hiddify_uuid)
-                await mail_svc.send_email(email, subject, html_body, text_body)
-                logger.info(f"📧 Письмо отправлено на {email} (повторная активация)")
-        except Exception as email_err:
-            logger.error(f"❌ Ошибка отправки письма для {email}: {email_err}")
-
-        return True
-
-    # 2. Найти или создать пользователя
-    user_res = await db.execute(text("SELECT id, hiddify_uuid FROM users WHERE email = :email"), {"email": email})
+async def activate_free_subscription(db: AsyncSession, email: str, tariff_slug: str, tg_user_id: int = None) -> bool:
+    """Активировать бесплатный тариф для пользователя по email или tg_user_id.
+    Всегда создаёт новую подписку, даже если у пользователя уже был sub_free.
+    """
+    # 1. Найти пользователя по tg_user_id или email
+    if tg_user_id:
+        user_res = await db.execute(
+            text("SELECT id, hiddify_uuid, email FROM users WHERE tg_user_id = :tg_id"),
+            {"tg_id": tg_user_id}
+        )
+    else:
+        user_res = await db.execute(
+            text("SELECT id, hiddify_uuid, email FROM users WHERE email = :email"),
+            {"email": email}
+        )
     user_row = user_res.fetchone()
 
     if user_row:
-        user_id, hiddify_uuid = user_row
+        user_id, hiddify_uuid, db_email = user_row
+        # если email в базе пустой, используем переданный (может быть tg_...)
+        if not db_email:
+            db_email = email
     else:
         hiddify_uuid = str(uuid_lib.uuid4())
         try:
             sql_user = """
-                INSERT INTO users (email, hiddify_uuid, created_at, updated_at)
-                VALUES (:email, :uuid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO users (email, hiddify_uuid, tg_user_id, created_at, updated_at)
+                VALUES (:email, :uuid, :tg_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
             """
-            res_user = await db.execute(text(sql_user), {"email": email, "uuid": hiddify_uuid})
+            res_user = await db.execute(text(sql_user), {
+                "email": email,
+                "uuid": hiddify_uuid,
+                "tg_id": tg_user_id
+            })
             user_id = res_user.scalar_one()
             await db.commit()
+            db_email = email
         except Exception as e:
+            logger.error(f"Ошибка создания пользователя: {e}")
             return False
 
+    # 2. Проверить, есть ли уже активный sub_free (не блокирует создание нового)
+    existing_sub = await db.execute(
+        text("""
+            SELECT id FROM subscriptions
+            WHERE user_id = :uid AND tariff_slug = 'sub_free' AND status = 'active'
+        """),
+        {"uid": user_id}
+    )
+    if existing_sub.fetchone():
+        logger.info(f"Пользователь {db_email} уже имеет активный sub_free, будет создан новый тестовый период")
+
     # 3. Создать подписку
-    days = 3  # из tariffs.json
+    days = 3
     expires_at = datetime.now(timezone.utc) + timedelta(days=days)
     sql_sub = """
         INSERT INTO subscriptions (user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at)
@@ -410,29 +412,49 @@ async def activate_free_subscription(db: AsyncSession, email: str, tariff_slug: 
     # 4. Провижн на HFM
     try:
         provisioner = HiddifyProvisioner()
-        success = await provisioner.create_user(uuid=hiddify_uuid, name=email.split("@")[0][:30])
-        if success:
-            await db.execute(text("UPDATE subscriptions SET status = 'active', activated_at = CURRENT_TIMESTAMP WHERE id = :sub_id"), {"sub_id": sub_id})
-            await db.commit()
-            logger.info(f"✅ Бесплатный тариф активирован для {email}")
+        # Пробуем создать пользователя; если он уже есть, игнорируем ошибку 400
+        success = False
+        try:
+            success = await provisioner.create_user(uuid=hiddify_uuid, name=db_email.split("@")[0][:30])
+        except Exception as e:
+            if "already exists" in str(e).lower() or "exists" in str(e).lower():
+                # Пользователь уже существует – это нормально, считаем успехом
+                success = True
+            else:
+                raise
 
-            # Отправка приветственного письма
-            try:
-                from app.email_service import email_service as mail_svc
-                subject, html_body, text_body = mail_svc.get_welcome_email(email, hiddify_uuid)
-                await mail_svc.send_email(email, subject, html_body, text_body)
-                logger.info(f"📧 Письмо отправлено на {email}")
-            except Exception as email_err:
-                logger.error(f"❌ Ошибка отправки письма для {email}: {email_err}")
+        if success:
+            await db.execute(
+                text("UPDATE subscriptions SET status = 'active', activated_at = CURRENT_TIMESTAMP WHERE id = :sub_id"),
+                {"sub_id": sub_id}
+            )
+            await db.commit()
+            logger.info(f"✅ Бесплатный тариф активирован для {db_email}")
+
+            # Отправка приветственного письма (только для реальных email)
+            if db_email and "@" in db_email and not db_email.endswith("@ulysses.internal"):
+                try:
+                    from app.email_service import email_service as mail_svc
+                    subject, html_body, text_body = mail_svc.get_welcome_email(db_email, hiddify_uuid)
+                    await mail_svc.send_email(db_email, subject, html_body, text_body)
+                    logger.info(f"📧 Письмо отправлено на {db_email}")
+                except Exception as email_err:
+                    logger.error(f"❌ Ошибка отправки письма для {db_email}: {email_err}")
 
             return True
         else:
-            await db.execute(text("UPDATE subscriptions SET provisioning_error = 'HFM API error' WHERE id = :sub_id"), {"sub_id": sub_id})
+            await db.execute(
+                text("UPDATE subscriptions SET provisioning_error = 'HFM API error' WHERE id = :sub_id"),
+                {"sub_id": sub_id}
+            )
             await db.commit()
-            logger.error(f"❌ HFM отклонил создание для {email}")
+            logger.error(f"❌ HFM отклонил создание для {db_email}")
             return False
     except Exception as e:
-        await db.execute(text("UPDATE subscriptions SET provisioning_error = :err WHERE id = :sub_id"), {"sub_id": sub_id, "err": str(e)[:200]})
+        await db.execute(
+            text("UPDATE subscriptions SET provisioning_error = :err WHERE id = :sub_id"),
+            {"sub_id": sub_id, "err": str(e)[:200]}
+        )
         await db.commit()
-        logger.error(f"❌ Ошибка провижна для {email}: {e}")
+        logger.error(f"❌ Ошибка провижна для {db_email}: {e}")
         return False

@@ -82,6 +82,10 @@ class HiddifyProvisioner:
                     logger.info(f"✅ [HIDDIFY CLIENT] Профиль {name} успешно создан на ноде VPN.")
                     await self.apply_config()
                     return True
+                elif response.status_code == 400 and "exists" in response.text.lower():
+                    logger.info(f"ℹ️ [HIDDIFY CLIENT] Пользователь {name} уже существует на ноде VPN.")
+                    # Пользователь уже есть, считаем операцию успешной
+                    return True
                 logger.error(f"❌ Ошибка create_user: HTTP {response.status_code} - {response.text[:200]}")
         except Exception as e:
             logger.error(f"❌ Сетевой сбой в create_user: {e}")

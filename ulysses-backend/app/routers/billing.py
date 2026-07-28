@@ -88,7 +88,7 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
     await db.refresh(new_attempt)
 
     # 3. Для бесплатного тарифа — мгновенная активация
-    if amount == 0.00:
+    if tariff_slug == "sub_free"
         from app.services.provisioning_manager import activate_free_subscription
         success = await activate_free_subscription(db, payload.email, payload.tariff_slug)
 

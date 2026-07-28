@@ -9,6 +9,9 @@ from app.services.hiddify_client import HiddifyProvisioner
 
 from .db_utils import find_user_by_identifier
 
+import uuid as uuid_lib
+import json
+
 console = Console()
 
 def async_cmd(f):
@@ -40,7 +43,6 @@ async def user_create(tg_id, username):
     Безопасно генерирует UUID, создает запись в PostgreSQL,
     активирует 3-дневный триал и делает провижн на ноду Hiddify v2.
     """
-    import uuid as uuid_lib
     from app.services.telegram_bot import send_telegram_message
 
     clean_username = username.lstrip("@").strip()
@@ -181,55 +183,28 @@ async def user_list():
 # ❌ КОМАНДА: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ (DELETE)
 # ============================================================
 @user.command(name="delete")
-@click.option("--tg-id", type=int, required=True, help="Telegram ID удаляемого пользователя")
-def user_delete(tg_id):
-    """Удалить пользователя из СУБД и каскадно аннулировать его на ноде HFM."""
-    async def _delete_user_pipeline():
-        from sqlalchemy import text
-        from app.database import AsyncSessionLocal
-        from app.services.hiddify_client import HiddifyProvisioner
+@click.argument("identifier")
+@async_cmd
+async def user_delete(identifier):
+    """Удалить пользователя по любому идентификатору (TG ID, email, UUID, DB ID)."""
+    async with AsyncSessionLocal() as session:
+        row = await find_user_by_identifier(session, identifier)
+        if not row:
+            console.print(f"[red]❌ Пользователь с идентификатором '{identifier}' не найден.[/red]")
+            return
+        tg_username, tg_user_id, hiddify_uuid, db_id = row
 
-        console.print(f"[yellow]⏳ Запуск удаления пользователя с TG ID {tg_id}...[/yellow]")
+        # Сначала удаляем на HFM
+        provisioner = HiddifyProvisioner()
+        hiddify_success = await provisioner.delete_user(uuid=str(hiddify_uuid))
+        if not hiddify_success:
+            console.print("[red]❌ Ошибка удаления на HFM.[/red]")
+            return
 
-        async with AsyncSessionLocal() as session:
-            try:
-                # 1. Ищем UUID перед удалением для синхронизации с HFM
-                res = await session.execute(
-                    text("SELECT hiddify_uuid FROM users WHERE tg_user_id = :tg_id"),
-                    {"tg_id": tg_id}
-                )
-                user_row = res.fetchone()
-
-                if not user_row:
-                    console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} не найден в СУБД биллинга.[/red]")
-                    return
-
-                uuid_to_delete = str(user_row[0])
-
-                # 2. СЕТЕВОЙ ШАГ: Сначала удаляем на физическом сервере Hiddify
-                provisioner = HiddifyProvisioner()
-                hiddify_success = await provisioner.delete_user(uuid=uuid_to_delete)
-
-                if not hiddify_success:
-                    console.print("[red]❌ Ошибка: Нода Hiddify v2 отклонила запрос на удаление. Отмена транзакции СУБД.[/red]")
-                    return
-
-                # 3. ТРАНЗАКЦИЯ СУБД: Каскадно удаляем из локальной PostgreSQL после подтверждения от API
-                await session.execute(
-                    text("DELETE FROM users WHERE tg_user_id = :tg_id"),
-                    {"tg_id": tg_id}
-                )
-                await session.commit()
-
-                console.print("[green]🗑️ Запись успешно удалена из локальной PostgreSQL.[/green]")
-                console.print("[green]✅ Успешно: Пользователь деактивирован и удален из ядра Hiddify Manager v2![/green]")
-
-            except Exception as err:
-                await session.rollback()
-                console.print(f"[red]❌ Критический сбой при удалении пользователя: {err}[/red]")
-
-    import asyncio
-    asyncio.run(_delete_user_pipeline())
+        # Удаляем из локальной БД
+        await session.execute(text("DELETE FROM users WHERE id = :db_id"), {"db_id": db_id})
+        await session.commit()
+        console.print(f"[green]✅ Пользователь успешно удалён.[/green]")
 
 
 # ============================================================
@@ -240,7 +215,6 @@ def user_delete(tg_id):
 def user_link(identifier):
     """Получить ссылку подписки для пользователя по любому идентификатору."""
     async def _get_user_link():
-        from app.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
             row = await find_user_by_identifier(session, identifier)
             if not row:
@@ -260,7 +234,6 @@ def user_link(identifier):
             console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
             console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT:[/bold magenta]")
             console.print(f"[bold white on magenta]{client_sub_url}[/bold white on magenta]\n")
-    import asyncio
     asyncio.run(_get_user_link())
 
 
@@ -273,10 +246,6 @@ def user_link(identifier):
 @click.argument("identifier")
 def user_json(identifier):
     """Вывести JSON-конфиг для пользователя по любому идентификатору."""
-    import asyncio
-    import json
-    from app.database import AsyncSessionLocal
-    from .db_utils import find_user_by_identifier
 
     async def _render_json():
         async with AsyncSessionLocal() as session:

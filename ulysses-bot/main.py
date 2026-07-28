@@ -174,7 +174,7 @@ async def cmd_start(message: Message):
     # 2. Собираем клавиатуру главного меню
     full_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🚀 Подключить VPN", callback_data="buy_tariff")
+            InlineKeyboardButton(text="🚀 Подключить VPN", callback_data="show_tariffs")
             # InlineKeyboardButton(text="📊 Баланс и Трафик", callback_data="check_balance")
         ],
         [
@@ -225,10 +225,6 @@ async def cmd_support(message: Message):
     await message.answer("🆘 Напишите ваш вопрос в ответ на это сообщение.", reply_markup=KEYBOARDS["back"]())
 
 
-
-# ============================================================
-# CALLBACK МАРШРУТИЗАЦИЯ НАЖАТИЙ (INLINE CLICK HANDLERS)
-# ============================================================
 
 # ============================================================
 # CALLBACK МАРШРУТИЗАЦИЯ НАЖАТИЙ (INLINE CLICK HANDLERS)
