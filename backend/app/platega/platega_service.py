@@ -11,6 +11,16 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.services.hiddify_client import HiddifyProvisioner
 from app.platega.platega import Platega, PlategaCallback
+from backend.app.services.activation_manager import get_tariffs
+
+from pathlib import Path
+# Вычисляем корень backend динамически
+BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+json_paths = [
+    str(BACKEND_ROOT / "app" / "tariffs.json"),
+    "app/tariffs.json"
+]
+
 
 class PlategaPaymentService:
     """Асинхронный провайдер для работы с SDK Platega.io."""
@@ -21,33 +31,40 @@ class PlategaPaymentService:
         )
 
     async def create_invoice_link(
-        self, amount: float, currency: str, attempt_id: str, tariff_name: str, method: int = Platega.METHOD_SBP_QR
+        self,
+        amount: float,
+        attempt_id: str,
+        tariff_name: str,
+        currency: Optional[str] = None,
+        method: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
-        """Генерация платежной ссылки для клиента."""
+        """Генерация платежной ссылки с гарантированным заполнением обязательных полей SDK."""
         base_domain = "ulysses.best"
+
+        # ИСПРАВЛЕНО: Если параметры не переданы, подставляем базовый мульти-контур.
+        # Метод 11 (CARD_ACQUIRING) или 10 обычно открывают стандартную форму,
+        # где Platega сама выводит кнопки СБП/карт/других шлюзов на основе настроек вашего терминала.
+        final_currency = str(currency).upper().strip() if currency else "RUB"
+        final_method = int(method) if method else 11  # 11 = METHOD_CARD_ACQUIRING (универсальный эквайринг)
+
         def _sync_call():
+            # Передаем параметры строго в соответствии с позиционными требованиями SDK
             return self.client.create_payment(
                 amount=float(amount),
-                currency=str(currency).upper().strip(),
-                payment_method=method,
+                currency=final_currency,
+                payment_method=final_method,
                 description=f"Оплата подписки Ulysses VPN: {tariff_name}",
                 return_url=f"https://{base_domain}/payment/success",
                 failed_url=f"https://{base_domain}/payment/fail",
                 payload=str(attempt_id)
             )
+
         try:
             return await asyncio.to_thread(_sync_call)
         except Exception as e:
             print(f"❌ [PLATEGA SERVICE] Ошибка при генерации ссылки: {e}")
             return None
 
-    async def verify_payment_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
-        """Резервный ручной опрос статуса транзакции."""
-        try:
-            return await asyncio.to_thread(self.client.get_payment_status, transaction_id)
-        except Exception as e:
-            print(f"❌ [PLATEGA SERVICE] Ошибка проверки статуса {transaction_id}: {e}")
-            return None
 
 
 class PlategaWebhookProcessor:
@@ -56,13 +73,9 @@ class PlategaWebhookProcessor:
     Выполняет валидацию, парсинг тарифов из JSON и начисление дней.
     """
     def __init__(self):
-        self.tariffs = {}
-        json_paths = ["ulysses-backend/app/tariffs.json", "app/tariffs.json", "../app/tariffs.json"]
-        for path in json_paths:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    self.tariffs = json.load(f)
-                break
+        # 🟢 ИСПРАВЛЕНО: Никакого хардкода путей и повторного чтения файлов!
+        # Используем наш готовый централизованный кэширующий метод
+        self.tariffs = get_tariffs()
 
     async def process_incoming_callback(self, headers: dict, body_str: str) -> Response:
         """Атомарная бизнес-логика обработки успешного платежа."""

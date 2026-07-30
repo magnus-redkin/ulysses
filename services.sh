@@ -32,7 +32,6 @@ for SERVICE in "${SERVICES[@]}"; do
 
     case "$STATUS" in
         active)
-            # Проверяем, что это running, а не exited
             if systemctl status "$SERVICE" --no-pager | grep -q "active (running)"; then
                 echo -e "${GREEN}●${NC} $SERVICE ${GREEN}✅ Работает${NC}"
             else
@@ -62,14 +61,11 @@ echo "╔═══════════════════════�
 echo "║        Детальная информация по процессам                  ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 
-# Остановка вручную запущенных процессов (чтобы не мешали systemd)
-echo "🔍 Проверка процессов, блокирующих порты бэкенда и фронтенда..."
+echo "🔍 Проверка процессов, блокирующих порты и дублирующие службы..."
 MANUAL_PIDS=""
 
-# Проверяем порты бэкенда (8000) и фронтенда (5173) через lsof
-# Проверяем порты бэкенда (8000) и фронтенда (5173) через lsof
+# 1. Проверяем сетевые порты бэкенда (8000) и фронтенда (5173) через lsof
 for pid in $(sudo lsof -t -i:8000,5173 2>/dev/null); do
-    # Проверяем, принадлежит ли процесс к systemd slice
     if ! cat /proc/$pid/cgroup 2>/dev/null | grep -q "system.slice"; then
         if [ -n "$pid" ]; then
             MANUAL_PIDS="$MANUAL_PIDS $pid"
@@ -77,15 +73,24 @@ for pid in $(sudo lsof -t -i:8000,5173 2>/dev/null); do
     fi
 done
 
+# 2. ИСПРАВЛЕНО: Проверяем ручные процессы Телеграм-бота, у которого нет портов (по имени файла запуска)
+for pid in $(pgrep -f "bot/main.py" 2>/dev/null); do
+    if ! cat /proc/$pid/cgroup 2>/dev/null | grep -q "system.slice"; then
+        if [ -n "$pid" ] && [[ ! " $MANUAL_PIDS " =~ " $pid " ]]; then
+            MANUAL_PIDS="$MANUAL_PIDS $pid"
+        fi
+    fi
+done
+
 if [ -n "$MANUAL_PIDS" ]; then
-    echo -e "   ${YELLOW}⚠️ Найдены сторонние процессы: $MANUAL_PIDS${NC}"
-    echo "   ➜ Жесткая остановка..."
+    echo -e "   ${YELLOW}⚠️ Найдены сторонние ручные процессы: $MANUAL_PIDS${NC}"
+    echo "   ➜ Жесткая принудительная остановка..."
     for pid in $MANUAL_PIDS; do
-        sudo kill -9 $pid 2>/dev/null && echo -e "   ${GREEN}✅ PID $pid остановлен${NC}"
+        sudo kill -9 $pid 2>/dev/null && echo -e "   ${GREEN}✅ PID $pid успешно завершен${NC}"
     done
     sleep 1
 else
-    echo -e "   ${GREEN}✅ Конфликтующих ручных процессов нет${NC}"
+    echo -e "   ${GREEN}✅ Конфликтующих ручных процессов в фоне нет${NC}"
 fi
 echo ""
 
@@ -108,7 +113,6 @@ echo "╔═══════════════════════�
 echo "║        Проверка доступности портов                        ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 
-# Проверка портов
 check_port() {
     local port=$1
     local name=$2

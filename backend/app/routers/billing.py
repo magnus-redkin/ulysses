@@ -32,7 +32,7 @@ class InvoiceCreate(BaseModel):
     email: Optional[str] = Field(None, description="Email пользователя (необязательно, если передан tg_user_id)")
     tg_user_id: Optional[int] = Field(None, description="Telegram ID пользователя")
     tariff_slug: str = Field(..., description="Слаг тарифного плана")
-    currency: Optional[str] = Field("RUB", description="Валюта (RUB, USD, EUR, USDT)")
+    currency: Optional[str] = Field(None, description="Валюта (RUB, USD, EUR, USDT)")
 
 class WebhookPayload(BaseModel):
     order_id: str = Field(..., description="ID инвойса в системе Ulysses")

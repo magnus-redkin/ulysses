@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
+# Ulysses Administration CLI Launcher
 
-# Фиксируем абсолютный базовый путь проекта Ulysses
-PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# FIX: Force PYTHONPATH to see both the backend application core and the project root
+export PYTHONPATH="backend:."
 
-# Пробрасываем жесткие абсолютные пути для Python
-export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/ulysses-backend:${PYTHONPATH}"
-
-# Запускаем строго через venv корня, передавая контекст вызова ($@)
-uv run --project "${PROJECT_ROOT}" python -m cli "$@"
+# Execute the admin main CLI entrypoint module utilizing our unified root virtual environment
+uv run python -m cli.__main__ "$@"

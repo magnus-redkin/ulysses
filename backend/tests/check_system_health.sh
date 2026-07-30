@@ -49,7 +49,7 @@ else
 fi
 
 # Проверка Бэкенда (Ищем процесс ulysses-backend)
-if ! pgrep -f "ulysses-backend" > /dev/null; then
+if ! pgrep -f "backend.app.main:app" > /dev/null; then
     ALERT_MSG+="🚨 ПРОЦЕСС ULYSSES-BACKEND НЕ НАЙДЕН (УПАЛ)!\n"
     FAILED=1
 else

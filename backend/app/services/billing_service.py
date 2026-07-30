@@ -17,7 +17,7 @@ async def create_invoice_logic(
     email: str | None,
     tg_user_id: int | None,
     tariff_slug: str,
-    currency: str = "RUB"
+    currency: str | None = None
 ) -> dict:
     """Бизнес-логика создания инвойса (общая для бота и веба)."""
     tariffs = get_tariffs()
@@ -68,42 +68,48 @@ async def create_invoice_logic(
 
     # 5. Платный тариф – создаём инвойс и ссылку на оплату
     if sub_check["status"] == "requires_payment":
-        # ИСПРАВЛЕНО: Обращаемся как к словарю user["user_id"] вместо user.id
         logger.info(f"💳 Создание инвойса для user_id={user['user_id']}, тариф={tariff_slug}, сумма={amount} {currency}")
 
-        # ИСПРАВЛЕНО: Финансовая безопасность. Конвертируем в Decimal, чтобы СУБД (Numeric 10,2) не ругалась на float
         from decimal import Decimal
         amount_decimal = Decimal(str(tariff_config["price"]))
 
+        # 🌟 1. МАТРИЦА СИНХРОНИЗАЦИИ ШЛЮЗОВ PLATEGA
+        VALUTA_METHOD_MAP = {
+            "RUB": 2,          # СБП QR
+            "USD": 12,         # Международный эквайринг
+            "EUR": 12,         # Международный эквайринг
+            "USDT": 13,        # Криптовалюта
+        }
+
+        # Нормализуем входящую строку валюты от бота
+        clean_currency = str(currency).upper().strip() if currency else "RUB"
+
+        # Вычисляем целевой ID метода Platega (если пусто или сбой, откатываемся на СБП = 2)
+        selected_method = VALUTA_METHOD_MAP.get(clean_currency, 2)
+        logger.info(f"🎯 Вычислен метод процессинга Platega: №{selected_method} для валюты {clean_currency}")
+
         new_attempt = PaymentAttempt(
             id=uuid.uuid4(),
-            # ИСПРАВЛЕНО: Извлекаем email из словаря через .get()
             email=user.get("email") or f"tg_{tg_user_id}@ulysses.internal",
             tariff_slug=tariff_slug,
             amount=amount_decimal,
-            currency=currency,
+            currency=clean_currency,
             status="pending",
-            # ИСПРАВЛЕНО: user["user_id"] вместо user.id
             user_id=user["user_id"]
         )
         db.add(new_attempt)
         await db.commit()
 
-        # Внимание: метод db.refresh() в асинхронном SQLAlchemy может вызывать ошибки,
-        # если у модели есть ленивые связи (lazy relationships).
-        # Так как id (UUID) мы сгенерировали сами выше, refresh можно безопасно убрать или закомментировать:
-        # await db.refresh(new_attempt)
-
-        # Вызов Platega
+        # 🌟 2. ИСПРАВЛЕНО: Передаем currency и method в SDK Platega!
         pay_service = PlategaPaymentService()
         invoice_data = await pay_service.create_invoice_link(
             amount=amount,
-            currency=currency,
             attempt_id=str(new_attempt.id),
             tariff_name=tariff_slug,
-            method=2  # METHOD_SBP_QR
+            currency=clean_currency,  # Пробрасываем вычисленную валюту
+            method=selected_method    # Пробрасываем точный ID шлюза (2, 12 или 13)
         )
-        logger.info(f"Platega response: {invoice_data}")
+        logger.info(f"Platega response (динамический шлюз): {invoice_data}")
 
         if invoice_data and "redirect" in invoice_data:
             payment_url = invoice_data["redirect"]
@@ -116,5 +122,5 @@ async def create_invoice_logic(
             "payment_url": payment_url,
             "order_id": str(new_attempt.id),
             "amount": amount,
-            "currency": currency
+            "currency": clean_currency
         }
