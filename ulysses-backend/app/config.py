@@ -67,6 +67,8 @@ class Settings(BaseSettings):
 
     DECOY_SITE: str = ""
 
+    HOST_API_KEY: str = ""
+
     @property
     def DATABASE_URL(self) -> str:
         if not self.DB_PASS:

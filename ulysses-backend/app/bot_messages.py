@@ -66,7 +66,7 @@ MESSAGES = {
     "payment_pending": (
         "💳 <b>Счёт сформирован!</b>\n\n"
         "🆔 Заказ: <code>{order_id}</code>\n"
-        "💰 Сумма: <b>{amount} ₽</b>\n\n"
+        "💰 Сумма: <b>{amount} {currency}</b>\n\n"
         "<i>Ожидайте подтверждения оплаты шлюзом.</i>"
     ),
     "payment_success": (

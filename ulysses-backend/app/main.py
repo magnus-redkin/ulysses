@@ -1,6 +1,6 @@
 # ulysses-backend/app/main.py
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
@@ -10,15 +10,17 @@ from app.services.monitor import start_monitor_daemon
 
 import logging
 logging.getLogger("app.routers.billing").setLevel(logging.INFO)
-logging.getLogger("app.services.provisioning_manager").setLevel(logging.INFO)
+logging.getLogger("app.services.activation_manager").setLevel(logging.INFO)
 logging.getLogger("app.email_service").setLevel(logging.INFO)
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("uvicorn")
 
 # Импорт новых изолированных модулей-роутеров
 from app.routers.bot import router as bot_router
 from app.routers.user import router as user_router
 from app.routers.billing import router as billing_router
-from app.routers.admin import router as admin_router
+# from app.routers.admin import router as admin_router
 from app.routers.test_billing import router as test_billing_router
 from app.routers.sub_render import router as sub_render_router
 from app.routers.webhooks import router as webhooks_router
@@ -38,6 +40,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0", lifespan=lifespan)
 
+@app.middleware("http")
+async def log_all_requests(request: Request, call_next):
+    logger.info(f"🔥 INCOMING: {request.method} {request.url} from {request.client.host}")
+    response = await call_next(request)
+    return response
+
+
+
 # Настройки CORS для работы фронтенда
 app.add_middleware(
     CORSMiddleware,
@@ -51,7 +61,7 @@ app.add_middleware(
 app.include_router(bot_router)
 app.include_router(user_router)
 app.include_router(billing_router)
-app.include_router(admin_router)
+# app.include_router(admin_router)
 # app.include_router(test_billing_router)
 app.include_router(sub_render_router)  # 🟢 Исправлено: Передали верное имя переменной
 app.include_router(webhooks_router)

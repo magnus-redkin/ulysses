@@ -9,6 +9,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+# from app.bot_messages import get_message
 
 import httpx
 from dotenv import load_dotenv
@@ -37,6 +38,10 @@ WEB_API_URL = os.getenv("WEB_API_URL", "http://127.0.0.1:5173")
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN не найден!")
     sys.exit(1)
+
+HOST_API_KEY = os.getenv("HOST_API_KEY")
+if not HOST_API_KEY:
+    logger.error("❌ HOST_API_KEY не найден в .env!")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -109,15 +114,19 @@ KEYBOARDS = {
     ]),
 }
 
-
-async def api_call(method: str, url: str, **kwargs) -> dict | None:
-    """Единый helper для запросов к бэкенду с глубоким логированием сырых данных."""
+async def api_call(method: str, url: str, api_key: str = None, **kwargs) -> dict | None:
+    """Единый helper для запросов к бэкенду с поддержкой X-API-Key."""
     try:
+        # Собираем заголовки, добавляем ключ, если он передан
+        headers = kwargs.pop("headers", {})
+        if api_key:
+            headers["X-API-Key"] = api_key
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             if method == "GET":
-                resp = await client.get(url, **kwargs)
+                resp = await client.get(url, headers=headers, **kwargs)
             else:
-                resp = await client.post(url, json=kwargs.get("json"))
+                resp = await client.post(url, json=kwargs.get("json"), headers=headers)
 
             if resp.status_code == 200:
                 logger.info(f"📡 [API СЫРОЙ ОТВЕТ] от {url} ➔ {resp.text[:200]}")
@@ -168,6 +177,7 @@ async def cmd_start(message: Message):
     await api_call(
         "POST",
         f"{BACKEND_API_URL}/api/bot/register",
+        api_key=HOST_API_KEY,
         json={"tg_user_id": tg_user_id, "tg_username": tg_username}
     )
 
@@ -201,7 +211,7 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("buy"))
 async def cmd_buy(message: Message):
-    state = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+    state = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs", api_key=HOST_API_KEY)
     if state:
         tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in state.items()]
         await message.answer("🛒 Выберите тариф:", reply_markup=get_subscriptions_keyboard(tariffs))
@@ -212,7 +222,7 @@ async def cmd_buy(message: Message):
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
     loading = await message.answer("⏳ Загрузка баланса...")
-    state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
+    state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action", api_key=HOST_API_KEY,
                            json={"tg_user_id": message.from_user.id, "action": "check_balance"})
     if state and state.get("balance"):
         await loading.edit_text(format_balance_from_state(state["balance"]), reply_markup=KEYBOARDS["back"](), parse_mode="HTML")
@@ -242,7 +252,7 @@ async def btn_change_currency(callback: CallbackQuery):
     logger.info(f"💲 [БОТ ВАЛЮТА] Пользователь переключил отображение на: {new_currency}")
 
     # Запрашиваем тарифы с бэкенда для рендеринга
-    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs", api_key=HOST_API_KEY)
     if not tariffs_resp:
         await callback.message.edit_text("⚠️ Не удалось загрузить тарифную сетку.", reply_markup=KEYBOARDS["back"]())
         return
@@ -261,14 +271,14 @@ async def btn_change_currency(callback: CallbackQuery):
 @dp.callback_query(F.data == "back_to_menu")
 async def btn_back(callback: CallbackQuery):
     try:
-        state = await api_call("GET", f"{BACKEND_API_URL}/api/bot/state?tg_user_id={callback.from_user.id}")
+        state = await api_call("GET", f"{BACKEND_API_URL}/api/bot/state?tg_user_id={callback.from_user.id}", api_key=HOST_API_KEY)
         if not state:
             await callback.answer("⚠️ Сервис временно недоступен.")
             return
 
         kb_name = state.get("keyboard", "back")
         if kb_name == "tariffs":
-            tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+            tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs", api_key=HOST_API_KEY)
             tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
             keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # Дефолт рубли при возврате
         else:
@@ -289,7 +299,7 @@ async def btn_show_tariffs(callback: CallbackQuery):
     """Обработчик клика по кнопке 'Посмотреть тарифы' с дефолтным переключателем RUB."""
     await callback.answer()
     logger.info("🔍 Пользователь запросил отображение тарифной сетки")
-    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+    tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs", api_key=HOST_API_KEY)
 
     if not tariffs_resp:
         await callback.message.edit_text("⚠️ Не удалось загрузить тарифную сетку.", reply_markup=KEYBOARDS["back"]())
@@ -299,62 +309,84 @@ async def btn_show_tariffs(callback: CallbackQuery):
     keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # По умолчанию рубли
     await callback.message.edit_text("🛒 Выберите подходящий тарифный план для Ulysses VPN:", reply_markup=keyboard)
 
-
 @dp.callback_query(F.data.startswith("t_") | F.data.startswith("tariff_"))
 async def btn_tariff(callback: CallbackQuery):
-    """
-    Универсальный обработчик клика по кнопке любого тарифа с поддержкой мультивалютности.
-    Парсит callback вида 't_1m:usd' или 't_1m:rub' и пушит параметры в бэкенд биллинга.
-    """
     await callback.answer()
-    raw_data = callback.data
 
-    # Инициализируем дефолты
-    chosen_currency = "rub"
-
-    # Извлекаем валюту, если она зашита через двоеточие (наша новая схема)
-    if ":" in raw_data:
-        raw_slug, chosen_currency = raw_data.split(":", 1)
+    # Парсим callback_data: 't_1m:rub' или 't_free:rub'
+    raw = callback.data
+    if ":" in raw:
+        slug, cur = raw.split(":", 1)
     else:
-        raw_slug = raw_data
+        slug, cur = raw, "rub"
 
-    # Приводим слаг к техническому стандарту бэкенда (sub_*)
-    if raw_slug.startswith("tariff_"):
-        tariff_slug = raw_slug.replace("tariff_", "")
+    # Определяем tariff_slug
+    if slug.startswith("tariff_"):
+        tariff_slug = slug.replace("tariff_", "")
     else:
-        short_slug = raw_slug.replace("t_", "")
-        tariff_slug = short_slug if short_slug.startswith("sub_") else f"sub_{short_slug}"
+        tariff_slug = slug.replace("t_", "")
+        if not tariff_slug.startswith("sub_"):
+            tariff_slug = f"sub_{tariff_slug}"
 
-    # Конвертируем внутренние типы валют под спецификацию Platega ISO
-    currency_iso = "RUB"
-    if chosen_currency == "usd": currency_iso = "USD"
-    elif chosen_currency == "crypto": currency_iso = "USDT"
+    # Конвертируем валюту
+    currency_iso = {"usd": "USD", "crypto": "USDT"}.get(cur, "RUB")
 
-    logger.info(f"💰 [БОТ ТАРИФ] Клик ➔ Тариф: {tariff_slug} | Выбранная Валюта: {currency_iso}")
+    print(f"DEBUG KEY _________1: {HOST_API_KEY}", flush=True)
+    # Вызываем наш новый create_invoice
+    async with httpx.AsyncClient() as client:
+        print(f"HOST_API_KEY xxxxxxxxxxxx = {HOST_API_KEY}")
+        resp = await client.post(
+            f"{BACKEND_API_URL}/api/billing/create-invoice",
+            json={
+                "tg_user_id": callback.from_user.id,
+                "email": None,
+                "tariff_slug": tariff_slug,
+                "currency": currency_iso
+            },
+            headers={"X-API-Key": HOST_API_KEY}   # ✅ Добавили ключ
+        )
+        if resp.status_code != 200:
+            await callback.message.edit_text("⚠️ Ошибка обработки запроса.", reply_markup=KEYBOARDS["back"]())
+            return
+        result = resp.json()
 
-    # Пробрасываем сигнал покупки на бэкенд, передавая currency_iso
-    state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
-                           json={
-                               "tg_user_id": callback.from_user.id,
-                               "action": "buy_tariff",
-                               "payload": {
-                                   "tariff_slug": tariff_slug,
-                                   "currency": currency_iso,  # 🟢 Пушим выбранную валюту бэкенду!
-                                   "tg_username": callback.from_user.username or "unknown"
-                               }
-                           })
-
-    if not state:
-        await callback.message.edit_text("⚠️ Ошибка обработки запроса биллинга.", reply_markup=KEYBOARDS["back"]())
-        return
-
-    keyboard = KEYBOARDS.get(state.get("keyboard", "back"), KEYBOARDS["back"])()
-
-    await callback.message.edit_text(
-        text=state.get("message", "Операция успешно обработана"),
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+    print(f"DEBUG RESP _____________2: {resp.status_code}", flush=True)
+    status = result.get("status")
+    if status == "free_tariff":
+        link = result["subscription_link"]
+        expires = result["expires_at"][:10]
+        msg = (
+            f"🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN активирован!</b>\n\n"
+            f"🔑 Ваша персональная ссылка подписки:\n"
+            f"<code>{result['subscription_link']}</code>\n\n"
+            f"⏳ Срок действия: до <b>{result['expires_at'][:10]}</b>\n\n"
+            f"📥 <b>Инструкция по подключению:</b>\n"
+            f"1. Скопируйте ссылку выше.\n"
+            f"2. Скачайте и откройте приложение <b>Hiddify Next</b>.\n"
+            f"3. Нажмите 'Добавить профиль' ➔ вставьте скопированную ссылку.\n"
+            f"4. Нажмите кнопку подключения.\n\n"
+            f"🚀 Приятного и безопасного полета!"
+        )
+        await callback.message.edit_text(msg, reply_markup=KEYBOARDS["back"](), parse_mode="HTML")
+    elif status == "payment_required":
+        payment_url = result["payment_url"]
+        amount = result["amount"]
+        currency = result["currency"]
+        order_id = result["order_id"]
+        msg = (
+            f"💳 <b>Счёт сформирован!</b>\n\n"
+            f"🆔 Заказ: <code>{order_id}</code>\n"
+            f"💰 Сумма: <b>{amount} {currency}</b>\n\n"
+            f"<i>Ожидайте подтверждения оплаты шлюзом.</i>"
+        )
+        # Кнопка "Оплатить"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Перейти к оплате", url=payment_url)],
+            [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")]
+        ])
+        await callback.message.edit_text(msg, reply_markup=kb, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(result.get("message", "Ошибка"), reply_markup=KEYBOARDS["back"]())
 
 
 @dp.callback_query(F.data.startswith("action_") | F.data.in_(["buy_tariff", "check_balance", "show_about", "show_rules", "show_support"]))
@@ -364,7 +396,7 @@ async def btn_action(callback: CallbackQuery):
     action = callback.data.replace("action_", "")
     logger.info(f"⚙️ [БОТ ЭКШЕН] Проброс сервисного сигнала ➔ action: {action}")
 
-    state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action",
+    state = await api_call("POST", f"{BACKEND_API_URL}/api/bot/action", api_key=HOST_API_KEY,
                            json={"tg_user_id": callback.from_user.id, "action": action})
 
     if not state:
@@ -373,7 +405,7 @@ async def btn_action(callback: CallbackQuery):
 
     kb_name = state.get("keyboard", "back")
     if kb_name == "tariffs":
-        tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs")
+        tariffs_resp = await api_call("GET", f"{BACKEND_API_URL}/api/billing/tariffs", api_key=HOST_API_KEY)
         tariffs = [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs_resp.items()] if tariffs_resp else []
         keyboard = get_subscriptions_keyboard(tariffs, current_currency="rub") # Дефолт rub при входе через Купить
     else:

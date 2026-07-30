@@ -1,36 +1,38 @@
 # ulysses-backend/app/routers/billing.py
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy import text
-from datetime import datetime, timezone, timedelta
-import uuid
-import json
-from pathlib import Path
+from app.database import get_db
+from app.dependencies import verify_api_key
+from app.services.billing_service import create_invoice_logic
+from app.services.activation_manager import get_tariffs
+from app.models import PaymentAttempt  # если нужен для invoice-status
+
+from pydantic import BaseModel, Field
+from typing import Optional
+
 import logging
 
-from app.database import get_db
-from app.config import settings
-from app.models import User, Subscription, PaymentAttempt  # Ваши ORM модели
-
-
-from app.services.provisioning_manager import ProvisioningManager
-from app.tasks.workers import provision_and_notify
+# curl -X POST http://127.0.0.1:8000/api/billing/create-invoice \
+#   -H "Content-Type: application/json" \
+#   -H "X-API-Key: 3mu6zk42E2E9v7zFoLViXbcCY4FVAYQc" \
+#   -d '{"tg_user_id":880765948, "tariff_slug":"sub_24m", "currency":"RUB"}'
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
+
 # ============================================================
 # PYDANTIC МОДЕЛИ (Схемы валидации запросов)
 # ============================================================
 
 class InvoiceCreate(BaseModel):
-    email: str = Field(..., description="Email пользователя или заглушка бота")
+    email: Optional[str] = Field(None, description="Email пользователя (необязательно, если передан tg_user_id)")
+    tg_user_id: Optional[int] = Field(None, description="Telegram ID пользователя")
     tariff_slug: str = Field(..., description="Слаг тарифного плана")
+    currency: Optional[str] = Field("RUB", description="Валюта (RUB, USD, EUR, USDT)")
 
 class WebhookPayload(BaseModel):
     order_id: str = Field(..., description="ID инвойса в системе Ulysses")
@@ -44,134 +46,39 @@ class WebhookPayload(BaseModel):
 
 @router.get("/tariffs")
 async def get_tariffs_endpoint():
-    """Открытый эндпоинт для получения актуальной тарифной сетки.
-    Используется ботом и фронтендом сайта.
-    """
-    try:
-        tariffs_path = Path(__file__).parent.parent / "tariffs.json"
-        with open(tariffs_path, "r", encoding="utf-8") as f:
-            tariffs = json.load(f)
-        return tariffs
-    except Exception as e:
-        logger.error(f"❌ Ошибка при чтении тарифов для API: {e}")
-        raise HTTPException(status_code=500, detail="Unable to load tariffs")
-
-
+    """Публичный эндпоинт для получения тарифов."""
+    return get_tariffs()
 
 @router.post("/create-invoice")
-async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db)):
-    """Создание нового счета (инвойса) и автоматическая активация бесплатного тарифа."""
-
-    # 1. Читаем конфигурацию тарифов
+async def create_invoice(
+    payload: InvoiceCreate,
+    db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key)
+):
+    """Создание инвойса (требует X-API-Key)."""
     try:
-        tariffs_path = Path(__file__).parent.parent / "tariffs.json"
-        with open(tariffs_path, "r", encoding="utf-8") as f:
-            tariffs = json.load(f)
-    except Exception as e:
-        logger.error(f"❌ Ошибка чтения tariffs.json: {e}")
-        raise HTTPException(status_code=500, detail="Tariff configuration error")
+        result = await create_invoice_logic(
+            db,
+            email=payload.email,
+            tg_user_id=payload.tg_user_id,
+            tariff_slug=payload.tariff_slug,
+            currency=payload.currency
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    tariff_config = tariffs.get(payload.tariff_slug, {})
-    amount = float(tariff_config.get("price", 490.00))
+@router.post("/webhook")
+async def payment_webhook(request: Request):
+    """Обработка вебхука от Platega (публичный)."""
+    from app.services.platega_webhook_handler import handle_platega_webhook
+    headers = dict(request.headers)
+    body_str = await request.body()
+    return await handle_platega_webhook(headers, body_str.decode())
 
-    logger.info(f"💰 Создание инвойса: тариф={payload.tariff_slug}, цена={amount}")
 
-    # 2. Создаем инвойс
-    new_attempt = PaymentAttempt(
-        email=payload.email,
-        tariff_slug=payload.tariff_slug,
-        amount=amount,
-        status="pending"
-    )
-    db.add(new_attempt)
-    await db.commit()
-    await db.refresh(new_attempt)
-
-    # 3. Для бесплатного тарифа — мгновенная активация
-    if tariff_slug == "sub_free"
-        from app.services.provisioning_manager import activate_free_subscription
-        success = await activate_free_subscription(db, payload.email, payload.tariff_slug)
-
-        if success:
-            # Получаем данные пользователя и подписки для ответа
-            user_query = await db.execute(
-                text("SELECT hiddify_uuid FROM users WHERE email = :email"),
-                {"email": payload.email}
-            )
-            user_row = user_query.fetchone()
-            hiddify_uuid = user_row[0] if user_row else None
-
-            sub_query = await db.execute(
-                text("SELECT expires_at FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = :email) AND tariff_slug = 'sub_free' AND status = 'active' ORDER BY id DESC LIMIT 1"),
-                {"email": payload.email}
-            )
-            sub_row = sub_query.fetchone()
-            expires_at = sub_row[0] if sub_row else None
-
-            domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-            subscription_link = f"https://{domain}/X6CbExbUw2/sub/{hiddify_uuid}/"
-
-            # Отправка уведомления в Telegram, если есть tg_user_id
-            user_tg = await db.execute(
-                text("SELECT tg_user_id FROM users WHERE email = :email"),
-                {"email": payload.email}
-            )
-            tg_row = user_tg.fetchone()
-            if tg_row and tg_row[0]:
-                try:
-                    from app.services.telegram_bot import send_telegram_message
-                    message_text = (
-                        f"🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN активирован!</b>\n\n"
-                        f"🔑 Ваша персональная ссылка подписки:\n"
-                        f"<code>{subscription_link}</code>\n\n"
-                        f"⏳ Срок действия: до <b>{expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else 'не ограничено'}</b>\n\n"
-                        f"📥 <b>Инструкция по подключению:</b>\n"
-                        f"1. Скопируйте ссылку выше.\n"
-                        f"2. Скачайте и откройте приложение <b>Hiddify Next</b>.\n"
-                        f"3. Нажмите 'Добавить профиль' ➔ вставьте скопированную ссылку.\n"
-                        f"4. Нажмите кнопку подключения.\n\n"
-                        f"🚀 Приятного и безопасного полета!"
-                    )
-                    await send_telegram_message(tg_id=tg_row[0], text=message_text)
-                    logger.info(f"📧 Сообщение в Telegram отправлено пользователю {tg_row[0]}")
-                except Exception as tg_err:
-                    logger.error(f"❌ Ошибка отправки Telegram-сообщения: {tg_err}")
-
-            new_attempt.status = "success"
-            await db.commit()
-
-            return {
-                "status": "free_tariff",
-                "hiddify_uuid": hiddify_uuid,
-                "amount": new_attempt.amount,
-                "currency": new_attempt.currency,
-                "subscription_link": subscription_link,
-                "expires_at": expires_at.isoformat() if expires_at else None,
-                "order_id": new_attempt.id  # можно удалить, если тикеты ищутся по hiddify_uuid
-            }
-        else:
-            new_attempt.status = "failed"
-            await db.commit()
-            return {
-                "status": "error",
-                "hiddify_uuid": hiddify_uuid,
-                "amount": new_attempt.amount,
-                "currency": new_attempt.currency,
-                "subscription_link": None,
-                "expires_at": None,
-                "order_id": new_attempt.id
-            }
-
-    # 4. Для платных тарифов (заглушка)
-    return {
-        "status": "success",
-        "hiddify_uuid": hiddify_uuid,
-        "amount": new_attempt.amount,
-        "currency": new_attempt.currency,
-        "subscription_link": None,
-        "expires_at": None,
-        "order_id": new_attempt.id
-    }
 
 
 @router.get("/invoice-status/{order_id}")
@@ -211,117 +118,6 @@ async def get_invoice_status(order_id: str, db: AsyncSession = Depends(get_db)):
         "tariff_slug": attempt.tariff_slug,
         "created_at": attempt.created_at.isoformat() if attempt.created_at else None,
         "subscription": subscription_info
-    }
-
-
-@router.post("/webhook")
-async def payment_webhook(
-    payload: WebhookPayload,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
-):
-    """Обработка успешного вебхука от абстрактного платежного агрегатора (UlyssesBillingGateway)."""
-    try:
-        invoice_id = uuid.UUID(payload.order_id) if isinstance(payload.order_id, str) else payload.order_id
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid order_id format")
-
-    result = await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == invoice_id))
-    attempt = result.scalar_one_or_none()
-
-    if not attempt:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-
-    if attempt.status == "success":
-        return {"status": "already_processed"}
-
-    if payload.status != "success":
-        attempt.status = "failed"
-        await db.commit()
-        return {"status": "failed_marked"}
-
-    attempt.status = "success"
-    attempt.provider_tx_id = payload.provider_tx_id
-    attempt.updated_at = datetime.utcnow()
-
-    user = None
-    if attempt.user_id:
-        user_result = await db.execute(select(User).where(User.id == attempt.user_id))
-        user = user_result.scalar_one_or_none()
-        logger.info(f"👤 [WEBHOOK] Юзер найден по привязанному user_id: {attempt.user_id}")
-
-    if not user:
-        user_result = await db.execute(select(User).where(User.email == attempt.email))
-        user = user_result.scalar_one_or_none()
-
-        if not user:
-            user = User(email=attempt.email, hiddify_uuid=uuid.uuid4())
-            db.add(user)
-            await db.flush()
-            logger.info(f"👤 [WEBHOOK] Создан новый пользователь сайта {user.email} с ключом {user.hiddify_uuid}")
-        else:
-            if not user.hiddify_uuid:
-                user.hiddify_uuid = uuid.uuid4()
-                await db.flush()
-
-        attempt.user_id = user.id
-
-    try:
-        tariffs_path = Path(__file__).parent.parent / "tariffs.json"
-        with open(tariffs_path, "r", encoding="utf-8") as f:
-            tariffs = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Tariff parse error")
-
-    tariff_config = tariffs.get(attempt.tariff_slug, {})
-    days_to_add = int(tariff_config.get("days", 30))
-
-    logger.info(f"📅 Тариф {attempt.tariff_slug}: +{days_to_add} дней")
-
-    sub_result = await db.execute(
-        select(Subscription).where(Subscription.user_id == user.id).order_by(Subscription.expires_at.desc()).limit(1)
-    )
-    last_subscription = sub_result.scalar_one_or_none()
-
-    now = datetime.utcnow()
-    starts_at = now
-    expires_at = now + timedelta(days=days_to_add)
-
-    if last_subscription and last_subscription.expires_at:
-        last_expires_naive = last_subscription.expires_at.replace(tzinfo=None) if last_subscription.expires_at.tzinfo else last_subscription.expires_at
-        if last_expires_naive > now:
-            starts_at = last_expires_naive
-            expires_at = starts_at + timedelta(days=days_to_add)
-            logger.info(f"🔄 Продление активной подписки юзера {user.id}. +{days_to_add} дней к {starts_at}")
-        else:
-            logger.info(f"⏳ Старая подписка юзера {user.id} уже истекла. Активируем новую.")
-    else:
-        logger.info(f"⏳ Новая активация подписки для юзера {user.id} на {days_to_add} дней.")
-
-    subscription = Subscription(
-        user_id=user.id,
-        tariff_slug=attempt.tariff_slug,
-        status="provisioning",
-        starts_at=starts_at,
-        expires_at=expires_at
-    )
-    db.add(subscription)
-    await db.commit()
-    await db.refresh(subscription)
-
-    logger.info(f"📝 Создана запись подписки {subscription.id} в статусе provisioning")
-
-    background_tasks.add_task(
-        provision_and_notify,
-        subscription_id=subscription.id,
-        to_email=attempt.email,
-        hiddify_uuid=str(user.hiddify_uuid)
-    )
-
-    return {
-        "status": "provisioning",
-        "hiddify_uuid": str(user.hiddify_uuid),
-        "message": "Оплата подтверждена. Срок подписки обновлен."
     }
 
 

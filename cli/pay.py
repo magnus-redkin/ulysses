@@ -33,7 +33,7 @@ def pay_invoice(tg_id, tariff, currency, amount):
     async def _invoice():
         import json
         import os
-        from app.private.platega_service import PlategaPaymentService
+        from app.service.platega_service import PlategaPaymentService
 
         async with AsyncSessionLocal() as session:
             # 1. Находим пользователя
@@ -104,7 +104,7 @@ def pay_invoice(tg_id, tariff, currency, amount):
 def pay_check(invoice_id):
     """Принудительно опросить статус инвойса напрямую в API Platega."""
     async def _check():
-        from app.private.platega_service import PlategaPaymentService
+        from app.service.platega_service import PlategaPaymentService
 
         async with AsyncSessionLocal() as session:
             res = await session.execute(text("SELECT provider_tx_id, status FROM payment_attempts WHERE id = :id"), {"id": invoice_id})
