@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.config import settings
+from backend.app.database import get_db
+from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Subscription Render"])
@@ -15,7 +15,7 @@ router = APIRouter(tags=["Subscription Render"])
 REALITY_PUBLIC_KEY = "HoNJg3CMNQy2oWUTk7gOIOjwiFDc9VkvsenMdFrweTE"
 REALITY_SHORT_ID = "0a3f9c1d7b2e4a0f"
 XHTTP_PATH = "/TZe1DA5Xmdguu8htyuGgnt"
-DECOY_SITE = getattr(settings, "DECOY_SITE", "dl.google.com")
+DECOY_SITE = getattr(settings, "DECOY_SITE", "://google.com")
 
 
 async def get_active_gateways(db: AsyncSession):
@@ -35,15 +35,18 @@ async def get_active_gateways(db: AsyncSession):
 async def generate_singbox_json(uuid: str, db: AsyncSession) -> dict:
     """
     Генерирует готовый JSON для SingBox/Hiddify клиента.
-    Используется и роутером API, и CLI (uadmin user json).
+    Разделяет автоматический выбор (только зарубеж) и ручной выбор (все ноды).
     """
     clean_uuid = str(uuid).strip().lower()
 
-    # Проверка пользователя
+    # Проверка статуса подписки пользователя
     user_sql = text("""
-        SELECT u.id, s.status FROM users u
+        SELECT u.id, s.status
+        FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.id
-        WHERE u.hiddify_uuid = :uuid ORDER BY s.id DESC LIMIT 1
+        WHERE u.hiddify_uuid = :uuid
+        ORDER BY (s.status = 'active') DESC, s.expires_at DESC NULLS LAST, s.id DESC
+        LIMIT 1
     """)
     user_res = await db.execute(user_sql, {"uuid": clean_uuid})
     user_row = user_res.fetchone()
@@ -52,15 +55,20 @@ async def generate_singbox_json(uuid: str, db: AsyncSession) -> dict:
         raise ValueError("Subscription not found")
 
     user_id, sub_status = user_row
+
+    # Заглушка, если подписка неактивна (безопасна для Hiddify Next)
     if sub_status != "active":
         return {
             "outbounds": [
-                {"type": "block", "tag": "🔒 Подписка истекла"},
                 {
                     "type": "selector",
                     "tag": "proxy",
-                    "outbounds": ["🔒 Подписка истекла"],
+                    "outbounds": ["🛑 ПОДПИСКА ИСТЕКЛА ИЛИ НЕАКТИВНА"],
                     "interrupt_exist_connections": True
+                },
+                {
+                    "type": "block",
+                    "tag": "🛑 ПОДПИСКА ИСТЕКЛА ИЛИ НЕАКТИВНА"
                 },
                 {"type": "direct", "tag": "direct"},
                 {"type": "block", "tag": "block"},
@@ -71,29 +79,34 @@ async def generate_singbox_json(uuid: str, db: AsyncSession) -> dict:
     active_gateways = await get_active_gateways(db)
 
     outbounds_servers = []
-    auto_select_tags = []
-    all_selectable_tags = []
+    auto_select_tags = []  # Только зарубежные ноды для urltest
+    all_selectable_tags = []  # Абсолютно все ноды для ручного селектора
 
     for gw in active_gateways:
         node_name, country, country_code, ip, port = gw
+        clean_country_code = str(country_code).upper().strip()
 
-        if country_code == "FI":
-            country_name = "Finland"
+        # 1. Присваиваем эмодзи флага на основе кода страны
+        if clean_country_code == "FI":
             flag = "🇫🇮"
-        elif country_code == "SE":
-            country_name = "Sweden"
+        elif clean_country_code == "SE":
             flag = "🇸🇪"
-        else:
-            country_name = "Russia"
+        elif clean_country_code == "RU":
             flag = "🇷🇺"
+        else:
+            flag = "🌐"
 
-        node_tag = f"{flag} {country_name}"
+        # 2. ИСПРАВЛЕНО: Рендерим красивое имя ноды (Fi-1, Ws-1/Se-1) вместо названия страны
+        # Если в базе данных n.name заполнен красиво (например, Fi-1), берем его, иначе генерируем фолбэк
+        # display_name = node_name if node_name else f"{clean_country_code}-1"
+        display_name = f"{clean_country_code}-1"
+        node_tag = f"{flag} {display_name}"
 
         vless_node = {
             "type": "vless",
             "tag": node_tag,
             "server": ip,
-            "server_port": 443,
+            "server_port": int(port) if port else 443,
             "uuid": clean_uuid,
             "tls": {
                 "enabled": True,
@@ -116,29 +129,61 @@ async def generate_singbox_json(uuid: str, db: AsyncSession) -> dict:
         }
 
         outbounds_servers.append(vless_node)
-        all_selectable_tags.append(node_tag)
-        auto_select_tags.append(node_tag)
+        all_selectable_tags.append(node_tag) # Все ноды идут в ручной выбор (включая RU)
 
-    final_outbounds = [
-        {
+        # 🌟 ИСПРАВЛЕНО: Запрещаем российским гейтам участвовать в автоматическом urltest тесте скорости!
+        if clean_country_code != "RU":
+            auto_select_tags.append(node_tag)
+
+    # Защитный фолбэк, если в базе данных временно нет активных серверов
+    if not outbounds_servers:
+        return {
+            "outbounds": [
+                {"type": "selector", "tag": "proxy", "outbounds": ["direct"]},
+                {"type": "direct", "tag": "direct"},
+                {"type": "block", "tag": "block"},
+                {"type": "dns", "tag": "dns-out"}
+            ]
+        }
+
+    # 3. Собираем итоговую конфигурацию outbounds
+    final_outbounds = []
+
+    # Определяем, есть ли у нас зарубежные сервера для автовыбора
+    if auto_select_tags:
+        # Селектор верхнего уровня содержит Автовыбор + список всех ручных серверов
+        final_outbounds.append({
             "type": "selector",
             "tag": "proxy",
-            "outbounds": ["Best Latency"] + all_selectable_tags,
+            "outbounds": ["🚀 Авто-выбор лучшего сервера"] + all_selectable_tags,
             "interrupt_exist_connections": True
-        },
-        {
+        })
+        # Сам балансировщик urltest опрашивает ТОЛЬКО зарубежные ноды (без RU)
+        final_outbounds.append({
             "type": "urltest",
-            "tag": "Best Latency",
+            "tag": "🚀 Авто-выбор лучшего сервера",
             "outbounds": auto_select_tags,
-            "url": "https://www.gstatic.com/generate_204",
+            "url": "https://gstatic.com",
             "interval": "3m0s",
             "tolerance": 50
-        },
+        })
+    else:
+        # Если зарубежных серверов вдруг нет, а есть только RU, убираем автовыбор, чтобы не падал Sing-Box
+        final_outbounds.append({
+            "type": "selector",
+            "tag": "proxy",
+            "outbounds": all_selectable_tags,
+            "interrupt_exist_connections": True
+        })
+
+    # Добавляем стандартные системные выходы
+    final_outbounds.extend([
         {"type": "direct", "tag": "direct"},
         {"type": "block", "tag": "block"},
         {"type": "dns", "tag": "dns-out"}
-    ]
+    ])
 
+    # Дописываем физические серверы VLESS
     final_outbounds.extend(outbounds_servers)
 
     return {"outbounds": final_outbounds}

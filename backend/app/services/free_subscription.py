@@ -5,8 +5,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.config import settings
-from app.services.hiddify_client import HiddifyProvisioner
+from backend.app.config import settings
+from backend.app.services.hiddify_client import HiddifyProvisioner
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,9 @@ async def create_free_subscription(
 ) -> dict:
     """
     Активировать бесплатный тариф sub_free для пользователя.
-    Создаёт запись подписки, делает provisioning на HFM.
-    Возвращает словарь с subscription_link и expires_at.
+    Создаёт запись подписки, делает provisioning на HFM и коммитит изменения.
     """
-    hiddify_uuid = user["hiddify_uuid"]
+    hiddify_uuid = str(user["hiddify_uuid"]).strip().lower()
     user_id = user["user_id"]
     email = user.get("email", "")
 
@@ -29,7 +28,7 @@ async def create_free_subscription(
     # 1. Создаём запись подписки (Статус изначально 'provisioning')
     sql_sub = """
         INSERT INTO subscriptions (user_id, tariff_slug, status, node_id, starts_at, expires_at, created_at, updated_at)
-        VALUES (:user_id, 'sub_free', 'provisioning', 'main', :starts, :expires, :starts, :starts)
+        VALUES (:user_id, 'sub_free', 'provisioning', 'main', :starts, :expires, NOW(), NOW())
         RETURNING id
     """
     res_sub = await db.execute(
@@ -42,10 +41,10 @@ async def create_free_subscription(
     )
     sub_id = res_sub.scalar_one()
 
-    # ИСПРАВЛЕНО: Используем flush вместо commit, чтобы получить id, но не закрывать транзакцию
+    # Синхронизируем состояние, чтобы получить сгенерированный ID
     await db.flush()
 
-    # 2. Provisioning на HFM
+    # 2. Provisioning на HFM с последующей фиксацией статуса
     try:
         provisioner = HiddifyProvisioner()
         success = await provisioner.create_user(
@@ -55,25 +54,34 @@ async def create_free_subscription(
 
         if success:
             await db.execute(
-                text("UPDATE subscriptions SET status = 'active', activated_at = :now WHERE id = :sub_id"),
-                {"now": now, "sub_id": sub_id}
-            )
-            logger.info(f"✅ sub_free активирован для {email or user_id}")
-        else:
-            # Ошибка логики API панели
-            await db.execute(
-                text("UPDATE subscriptions SET status = 'failed', provisioning_error = 'HFM API error' WHERE id = :sub_id"),
+                text("UPDATE subscriptions SET status = 'active', activated_at = NOW(), updated_at = NOW() WHERE id = :sub_id"),
                 {"sub_id": sub_id}
             )
+            logger.info(f"✅ [FREE SUB] sub_free успешно активирован в СУБД для {email or user_id}")
+        else:
+            await db.execute(
+                text("UPDATE subscriptions SET status = 'failed', provisioning_error = 'HFM API error', updated_at = NOW() WHERE id = :sub_id"),
+                {"sub_id": sub_id}
+            )
+            # ИСПРАВЛЕНО: Принудительный коммит даже для статуса failed, чтобы админ видел ошибку в CLI
+            await db.commit()
             raise RuntimeError("Hiddify API rejected user creation")
+
+        # 🌟 ИСПРАВЛЕНО: Жесткий коммит транзакции! Без него база данных делала ROLLBACK при закрытии коннекта
+        await db.commit()
 
     except Exception as e:
         logger.error(f"❌ Фатальная ошибка интеграции Hiddify: {e}")
-        await db.execute(
-            text("UPDATE subscriptions SET status = 'failed', provisioning_error = :err WHERE id = :sub_id"),
-            {"sub_id": sub_id, "err": str(e)[:200]}
-        )
-        # ИСПРАВЛЕНО: Пробрасываем ошибку выше, чтобы сработал корректный rollback транзакции
+        try:
+            await db.execute(
+                text("UPDATE subscriptions SET status = 'failed', provisioning_error = :err, updated_at = NOW() WHERE id = :sub_id"),
+                {"sub_id": sub_id, "err": str(e)[:200]}
+            )
+            await db.commit()
+        except Exception as db_err:
+            logger.error(f"❌ Не удалось записать ошибку провижна в СУБД: {db_err}")
+            await db.rollback()
+
         raise RuntimeError(f"VPN Provisioning failed: {e}")
 
     # 3. Формируем ссылку для подключения

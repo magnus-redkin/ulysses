@@ -209,7 +209,7 @@ async def user_link(identifier):
         console.print(f" (DB ID: {db_id})")
         console.print(f"🆔 UUID в системе: [yellow]{hiddify_uuid}[/yellow]")
         console.print(f"🔗 [bold magenta]ДЕЙСТВУЮЩАЯ ССЫЛКА ДЛЯ ИМПОРТА В HIDDIFY NEXT / SING-BOX:[/bold magenta]")
-        console.print(f"[bold white on magenta] {client_sub_url} [/bold white on magenta]\n")
+        console.print(f"[bold white on magenta]{client_sub_url}[/bold white on magenta]\n")
 
 
 # ============================================================
@@ -260,14 +260,16 @@ async def user_json(identifier):
             from app.routers.sub_render import generate_singbox_json
             json_config = await generate_singbox_json(str(hiddify_uuid), session)
 
-            console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")
+            # console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")
+            console.print("📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):")
             console.print("─" * 100)
 
             # ИСПРАВЛЕНО: Вместо json.dumps используем встроенный Rich-компонент,
             # который автоматически раскрасит ключи, строки и числа для удобства чтения в терминале
             if isinstance(json_config, dict):
                 raw_json_str = json.dumps(json_config, ensure_ascii=False, indent=2)
-                syntax = Syntax(raw_json_str, "json", theme="monokai", line_numbers=True)
+                syntax = Syntax(raw_json_str, "json", theme="monokai_", line_numbers=True)
+                # syntax = Syntax(raw_json_str, "json", line_numbers=True)
                 console.print(syntax)
             else:
                 console.print(f"[yellow]⚠️ Рендерер вернул не словарь, а: {type(json_config)}[/yellow]")
