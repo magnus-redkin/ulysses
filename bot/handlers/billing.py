@@ -7,22 +7,18 @@ from bot.keyboards import KEYBOARDS
 from bot.utils import api_call
 from bot.handlers.common import format_balance_from_state
 
+print("✅ billing.py loaded with new handler")
+
 router = Router()
 
 # ============================================================
-# ВНУТРЕННИЙ СЕРВИСНЫЙ СЛОЙ (ОБРАБОТКА ЗАПРОСОВ)
+# ВНУТРЕННИЙ СЕРВИСНЫЙ СЛОЙ
 # ============================================================
 
-async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: str, method_id: str):
+async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: str, currency: str = "RUB"):
     """
-    Централизованная функция отправки запроса в биллинг бэкенда.
-    Безопасно перерисовывает интерфейс Telegram без изменения frozen-объектов.
+    Создаёт инвойс на бэкенде с указанной валютой и выводит кнопку "Оплатить".
     """
-    # Сопоставляем методы с ISO-валютами шлюзов
-    currency_map = {"2": "RUB", "10": "RUB", "11": "RUB", "12": "USD", "13": "USDT"}
-    selected_currency = currency_map.get(method_id, "RUB")
-
-    # ИСПРАВЛЕНО: Безопасный вызов Telegram API без мутации frozen-объектов Pydantic!
     await callback_query.message.edit_text(
         text="⏳ <i>Формирую безопасный запрос к серверу, пожалуйста, подождите...</i>"
     )
@@ -31,8 +27,8 @@ async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: 
     payload = {
         "tg_user_id": callback_query.from_user.id,
         "email": None,
-        "tariff_slug": f"sub_{tariff_slug.lower()}", # Превращаем 'free' в 'sub_free', '24m' в 'sub_24m'
-        "currency": selected_currency
+        "tariff_slug": f"sub_{tariff_slug.lower()}",
+        "currency": currency          # <-- теперь валюта передаётся
     }
 
     result = await api_call("POST", target_url, api_key=HOST_API_KEY, json=payload)
@@ -44,22 +40,8 @@ async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: 
         )
         return
 
-    # Сценарий А: Требуется оплата (Платный тариф)
-    if result.get("status") == "payment_required":
-        payment_url = result.get("payment_url")
-        amount = result.get("amount", 0)
-
-        pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Перейти к оплате", url=payment_url)],
-            [InlineKeyboardButton(text="⬅️ Изменить способ оплаты", callback_data=f"t_{tariff_slug}")]
-        ])
-        await callback_query.message.edit_text(
-            text=f"💳 <b>Счет на оплату успешно сформирован!</b>\n\nСумма к оплате: <b>{amount:.2f} {selected_currency}</b>\n\nИспользуйте официальную кнопку ниже для перехода на безопасную страницу оплаты шлюза Platega:",
-            reply_markup=pay_keyboard
-        )
-
-    # Сценарий Б: Бесплатный тариф (Выдаем готовый профиль туннеля Ulysses)
-    elif result.get("status") == "free_tariff" or result.get("subscription_link"):
+    # Бесплатный тариф
+    if result.get("status") == "free_tariff" or result.get("subscription_link"):
         msg = (
             f"🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN успешно активирован!</b>\n\n"
             f"🔑 <b>Ваша персональная ссылка подписки:</b>\n"
@@ -73,21 +55,36 @@ async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: 
             f"🚀 Приятного и безопасного полета без блокировок!"
         )
         await callback_query.message.edit_text(text=msg, reply_markup=KEYBOARDS["back"]())
+        return
 
-    else:
-        # Обработка ошибок валидации ("Бесплатный тариф можно активировать только один раз")
-        error_text = result.get("message", "Ошибка проведения операции.")
-        await callback_query.message.edit_text(text=f"⚠️ {error_text}", reply_markup=KEYBOARDS["back"]())
+    # Платный тариф – показываем одну кнопку оплаты
+    if result.get("status") == "payment_required":
+        payment_url = result.get("payment_url")
+        amount = result.get("amount", 0)
+
+        pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Перейти к оплате", url=payment_url)],
+            [InlineKeyboardButton(text="⬅️ Изменить тариф", callback_data="buy_tariff")]
+        ])
+        await callback_query.message.edit_text(
+            text=f"💳 <b>Счет на оплату успешно сформирован!</b>\n\nСумма к оплате: <b>{amount:.2f} {currency}</b>\n\nНажмите кнопку ниже, чтобы перейти на безопасную страницу оплаты Platega и выбрать удобный способ (карта, СБП, крипта).",
+            reply_markup=pay_keyboard
+        )
+        return
+
+    # Неизвестная ситуация
+    error_text = result.get("message", "Ошибка проведения операции.")
+    await callback_query.message.edit_text(text=f"⚠️ {error_text}", reply_markup=KEYBOARDS["back"]())
 
 
 # ============================================================
-# АСИНХРОННЫЕ ХЭНДЛЕРЫ КНОПОК И КОМАНД
+# ХЭНДЛЕРЫ
 # ============================================================
 
 @router.message(Command("buy"))
 @router.callback_query(F.data == "buy_tariff")
 async def show_clean_tariffs(event):
-    """ЭКРАН 1: Загрузка тарифной сетки из СУБД и вывод чистых кнопок тарифов."""
+    """ЭКРАН 1: Загрузка тарифов и вывод кнопок."""
     is_callback = isinstance(event, CallbackQuery)
     message_obj = event.message if is_callback else event
 
@@ -113,36 +110,31 @@ async def show_clean_tariffs(event):
     else:
         await message_obj.answer(text=display_msg, reply_markup=reply_kb)
 
+
 @router.callback_query(F.data.startswith("t_"))
 async def process_tariff_click(callback_query: CallbackQuery):
-    """ЭКРАН 2: Перехват выбранного тарифа. Сквозная мгновенная активация для Free."""
+    """ЭКРАН 2: После выбора тарифа – показываем выбор валюты."""
     tariff_slug = callback_query.data.replace("t_", "", 1)
-
-    if tariff_slug.lower() == "free":
-        logger.info(f"🎁 Пользователь {callback_query.from_user.id} запросил тест-драйв. Минуем Platega меню...")
-
-        # ИСПРАВЛЕНО: Явно передаем 'free', чтобы функция ниже сгенерировала верный sub_free инвойс
-        await _execute_invoice_creation(callback_query, tariff_slug="free", method_id="2")
-        await callback_query.answer()
-        return
-
-    # Логика для платных тарифов (выводит 5 красивых русских кнопок Platega)
+    # Используем клавиатуру, которая теперь содержит 3 валюты
     await callback_query.message.edit_text(
-        text=f"💳 <b>Выбран тарифный план: {tariff_slug.upper()}</b>\n\nТеперь выберите наиболее удобный метод оплаты шлюза Platega:",
+        text=f"💳 <b>Выбран тариф: {tariff_slug.upper()}</b>\n\nВыберите валюту оплаты:",
         reply_markup=KEYBOARDS["payment_methods"](tariff_slug=tariff_slug)
     )
     await callback_query.answer()
 
+
 @router.callback_query(F.data.startswith("pay:"))
-async def process_payment_send(callback_query: CallbackQuery):
-    """ФИНАЛ: Обработка клика по одной из 5 платежных кнопок для платных тарифов."""
-    _, tariff_slug, method_id = callback_query.data.split(":")
-    await _execute_invoice_creation(callback_query, tariff_slug=tariff_slug, method_id=method_id)
+async def process_currency_selected(callback_query: CallbackQuery):
+    """ЭКРАН 3: Валюта выбрана → создаём инвойс."""
+    _, tariff_slug, currency = callback_query.data.split(":")
+    await _execute_invoice_creation(callback_query, tariff_slug=tariff_slug, currency=currency)
     await callback_query.answer()
 
+
 # ============================================================
-# ⚙️ НАВИГАЦИОННЫЙ СЛОЙ И ИНФОРМАЦИОННЫЕ ЭКРАНЫ
+# НАВИГАЦИЯ И ОСТАЛЬНЫЕ ХЭНДЛЕРЫ (без изменений)
 # ============================================================
+
 
 @router.callback_query(F.data.in_(["show_about", "show_rules", "show_support", "back_to_menu"]))
 async def process_menu_navigation(callback_query: CallbackQuery):

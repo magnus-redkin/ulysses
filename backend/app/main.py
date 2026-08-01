@@ -6,7 +6,6 @@ from app.config import settings
 
 import asyncio
 from contextlib import asynccontextmanager
-from app.services.monitor import start_monitor_daemon
 
 import logging
 logging.getLogger("app.routers.billing").setLevel(logging.INFO)
@@ -21,21 +20,17 @@ from app.routers.bot import router as bot_router
 from app.routers.user import router as user_router
 from app.routers.billing import router as billing_router
 # from app.routers.admin import router as admin_router
-from app.routers.test_billing import router as test_billing_router
+# from app.routers.test_billing import router as test_billing_router
 from app.routers.sub_render import router as sub_render_router
 from app.routers.webhooks import router as webhooks_router
 
 
-# Создаем lifespan обработчик событий старта/остановки сервера
+# Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 🧠 Запускаем демона мониторинга асинхронной фоновой задачей при старте сервера
-    monitor_task = asyncio.create_task(start_monitor_daemon())
-
-    yield  # Здесь бэкенд крутится и принимает запросы
-
-    # При остановке сервера uvicorn аккуратно гасим фоновый таск
-    monitor_task.cancel()
+    # Здесь можно оставить другие фоновые задачи при необходимости
+    yield  # Сервер работает
+    # Здесь можно добавить cleanup, если потребуется
 
 
 app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0", lifespan=lifespan)
@@ -45,7 +40,6 @@ async def log_all_requests(request: Request, call_next):
     logger.info(f"🔥 INCOMING: {request.method} {request.url} from {request.client.host}")
     response = await call_next(request)
     return response
-
 
 
 # Настройки CORS для работы фронтенда

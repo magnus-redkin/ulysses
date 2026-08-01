@@ -73,27 +73,11 @@ async def create_invoice_logic(
         from decimal import Decimal
         amount_decimal = Decimal(str(tariff_config["price"]))
 
-        # 🌟 1. МАТРИЦА СИНХРОНИЗАЦИИ ШЛЮЗОВ PLATEGA
-        VALUTA_METHOD_MAP = {
-            "RUB": 2,          # СБП QR
-            "USD": 12,         # Международный эквайринг
-            "EUR": 12,         # Международный эквайринг
-            "USDT": 13,        # Криптовалюта
-        }
-
-        # Нормализуем входящую строку валюты от бота
-        clean_currency = str(currency).upper().strip() if currency else "RUB"
-
-        # Вычисляем целевой ID метода Platega (если пусто или сбой, откатываемся на СБП = 2)
-        selected_method = VALUTA_METHOD_MAP.get(clean_currency, 2)
-        logger.info(f"🎯 Вычислен метод процессинга Platega: №{selected_method} для валюты {clean_currency}")
-
         new_attempt = PaymentAttempt(
             id=uuid.uuid4(),
             email=user.get("email") or f"tg_{tg_user_id}@ulysses.internal",
             tariff_slug=tariff_slug,
             amount=amount_decimal,
-            currency=clean_currency,
             status="pending",
             user_id=user["user_id"]
         )
@@ -106,13 +90,13 @@ async def create_invoice_logic(
             amount=amount,
             attempt_id=str(new_attempt.id),
             tariff_name=tariff_slug,
-            currency=clean_currency,  # Пробрасываем вычисленную валюту
-            method=selected_method    # Пробрасываем точный ID шлюза (2, 12 или 13)
+            currency=currency,
+            user_telegram_id=tg_user_id
         )
         logger.info(f"Platega response (динамический шлюз): {invoice_data}")
 
-        if invoice_data and "redirect" in invoice_data:
-            payment_url = invoice_data["redirect"]
+        if invoice_data and "url" in invoice_data:
+            payment_url = invoice_data["url"]
         else:
             logger.error(f"❌ Platega не вернул ссылку для {new_attempt.id}")
             raise RuntimeError("Platega unavailable")
@@ -121,6 +105,5 @@ async def create_invoice_logic(
             "status": "payment_required",
             "payment_url": payment_url,
             "order_id": str(new_attempt.id),
-            "amount": amount,
-            "currency": clean_currency
+            "amount": amount
         }

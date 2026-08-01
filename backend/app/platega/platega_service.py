@@ -1,7 +1,8 @@
-import json
-import os
+# /app/platega/platega_service.py
 import asyncio
-import uuid  # <-- ИСПРАВЛЕНО
+import uuid
+import httpx
+
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from fastapi import Response, status
@@ -9,26 +10,18 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.services.hiddify_client import HiddifyProvisioner
 from app.platega.platega import Platega, PlategaCallback
-from backend.app.services.activation_manager import get_tariffs
-
-from pathlib import Path
-# Вычисляем корень backend динамически
-BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
-json_paths = [
-    str(BACKEND_ROOT / "app" / "tariffs.json"),
-    "app/tariffs.json"
-]
+from app.services.activation_manager import get_tariffs
+from app.services.hiddify_client import HiddifyProvisioner
 
 
 class PlategaPaymentService:
-    """Асинхронный провайдер для работы с SDK Platega.io."""
+    """Провайдер Platega – прямой HTTP без SDK, создаёт универсальную ссылку."""
+
     def __init__(self):
-        self.client = Platega(
-            merchant_id=settings.PLATEGA_MERCHANT_ID,
-            secret=settings.PLATEGA_API
-        )
+        self.merchant_id = settings.PLATEGA_MERCHANT_ID
+        self.secret = settings.PLATEGA_API
+        self.api_url = "https://app.platega.io/v2/transaction/process"
 
     async def create_invoice_link(
         self,
@@ -36,35 +29,50 @@ class PlategaPaymentService:
         attempt_id: str,
         tariff_name: str,
         currency: Optional[str] = None,
-        method: Optional[int] = None
+        user_telegram_id: Optional[int] = None,
+        username: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Генерация платежной ссылки с гарантированным заполнением обязательных полей SDK."""
+        """
+        Генерирует платёжную ссылку БЕЗ paymentMethod.
+        Плательщик на стороне Platega сам выберет способ оплаты.
+        """
         base_domain = "ulysses.best"
-
-        # ИСПРАВЛЕНО: Если параметры не переданы, подставляем базовый мульти-контур.
-        # Метод 11 (CARD_ACQUIRING) или 10 обычно открывают стандартную форму,
-        # где Platega сама выводит кнопки СБП/карт/других шлюзов на основе настроек вашего терминала.
         final_currency = str(currency).upper().strip() if currency else "RUB"
-        final_method = int(method) if method else 11  # 11 = METHOD_CARD_ACQUIRING (универсальный эквайринг)
 
-        def _sync_call():
-            # Передаем параметры строго в соответствии с позиционными требованиями SDK
-            return self.client.create_payment(
-                amount=float(amount),
-                currency=final_currency,
-                payment_method=final_method,
-                description=f"Оплата подписки Ulysses VPN: {tariff_name}",
-                return_url=f"https://{base_domain}/payment/success",
-                failed_url=f"https://{base_domain}/payment/fail",
-                payload=str(attempt_id)
-            )
+        payload = {
+            "paymentDetails": {
+                "amount": float(amount),
+                "currency": final_currency
+            },
+            "description": f"Оплата подписки Ulysses VPN: {tariff_name}",
+            "return": f"https://{base_domain}/payment/success",
+            "failedUrl": f"https://{base_domain}/payment/fail",
+            "payload": str(attempt_id)
+        }
+
+        if user_telegram_id is not None:
+            payload["metadata"] = {
+                "userId": str(user_telegram_id),
+                "userName": f"@{username}" if username else ""
+            }
+
+        headers = {
+            "X-MerchantId": self.merchant_id,
+            "X-Secret": self.secret,
+            "Content-Type": "application/json"
+        }
 
         try:
-            return await asyncio.to_thread(_sync_call)
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(self.api_url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()
+                else:
+                    print(f"❌ [PLATEGA] HTTP {resp.status_code}: {resp.text}")
+                    return None
         except Exception as e:
-            print(f"❌ [PLATEGA SERVICE] Ошибка при генерации ссылки: {e}")
+            print(f"❌ [PLATEGA SERVICE] Ошибка при запросе к API: {e}")
             return None
-
 
 
 class PlategaWebhookProcessor:
@@ -73,8 +81,6 @@ class PlategaWebhookProcessor:
     Выполняет валидацию, парсинг тарифов из JSON и начисление дней.
     """
     def __init__(self):
-        # 🟢 ИСПРАВЛЕНО: Никакого хардкода путей и повторного чтения файлов!
-        # Используем наш готовый централизованный кэширующий метод
         self.tariffs = get_tariffs()
 
     async def process_incoming_callback(self, headers: dict, body_str: str) -> Response:
@@ -95,14 +101,14 @@ class PlategaWebhookProcessor:
         if not callback.is_success():
             return Response(content="OK", status_code=status.HTTP_200_OK)
 
-        # ИСПРАВЛЕНО: Безопасное приведение строки заказа к UUID объекту для PostgreSQL
+        # Приведение строки заказа к UUID
         try:
             attempt_uuid = uuid.UUID(str(raw_attempt_id).strip())
         except (ValueError, TypeError):
             print(f"❌ [WEBHOOK ERROR] Invalid UUID format: {raw_attempt_id}")
             return Response(content="Invalid UUID format", status_code=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Быстрая СУБД транзакция (Защита от состояния гонки и дедлоков)
+        # 2. Быстрая СУБД транзакция (защита от гонки)
         async with AsyncSessionLocal() as session:
             try:
                 res_inv = await session.execute(
@@ -119,7 +125,7 @@ class PlategaWebhookProcessor:
                 if inv_status == "success":
                     return Response(content="Already Processed", status_code=status.HTTP_200_OK)
 
-                # Переводим в промежуточный статус и мгновенно коммитим, освобождая СУБД воркеры
+                # Переводим в processing и коммитим
                 await session.execute(
                     text("UPDATE payment_attempts SET status = 'processing', updated_at = NOW() WHERE id = :id"),
                     {"id": attempt_uuid}
@@ -131,7 +137,7 @@ class PlategaWebhookProcessor:
                 print(f"💥 [CRITICAL ERROR] Сбой первичной транзакции вебхука: {err}")
                 return Response(content="Internal Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. Изолированная сетевая и финальная логика за пределами мертвой блокировки
+        # 3. Изолированная сетевая и финальная логика
         try:
             async with AsyncSessionLocal() as session:
                 clean_tariff = tariff_slug.lower().strip()
@@ -159,7 +165,7 @@ class PlategaWebhookProcessor:
 
                 total_remaining_days = (new_expires - now).days
 
-                # Запрос к инфраструктуре Hiddify
+                # Hiddify
                 provisioner = HiddifyProvisioner()
                 hiddify_success = await provisioner.create_user(
                     uuid=hiddify_uuid_str,
@@ -167,24 +173,22 @@ class PlategaWebhookProcessor:
                     package_days=total_remaining_days if total_remaining_days > 0 else days_to_add,
                     usage_limit_gb=500
                 )
-                # if hiddify_success:
-                #     await provisioner.enable_user(hiddify_uuid_str)
 
-                # Фиксация успехов в БД
                 status_str = "active" if hiddify_success else "provisioning"
 
+                # Обновляем попытку
                 await session.execute(
                     text("UPDATE payment_attempts SET status = 'success', provider_tx_id = :tx, updated_at = NOW() WHERE id = :id"),
                     {"tx": platega_tx_id, "id": attempt_uuid}
                 )
 
+                # Подписка
                 if sub_row:
                     await session.execute(
                         text("UPDATE subscriptions SET expires_at = :exp, status = :status, updated_at = NOW() WHERE user_id = :uid AND status = 'active'"),
                         {"exp": new_expires, "status": status_str, "uid": user_id}
                     )
                 else:
-                    # ИСПРАВЛЕНО: Добавлены все обязательные поля СУБД ограничений
                     await session.execute(
                         text("""
                             INSERT INTO subscriptions (user_id, tariff_slug, status, starts_at, expires_at, activated_at, node_id, created_at, updated_at)
@@ -195,6 +199,7 @@ class PlategaWebhookProcessor:
 
                 await session.commit()
 
+                # Уведомление
                 if tg_id:
                     try:
                         from app.services.telegram_bot import send_telegram_message
