@@ -62,8 +62,7 @@ app.include_router(bot_router)
 app.include_router(user_router)
 app.include_router(billing_router)
 # app.include_router(admin_router)
-# app.include_router(test_billing_router)
-app.include_router(sub_render_router)  # 🟢 Исправлено: Передали верное имя переменной
+app.include_router(sub_render_router)
 app.include_router(webhooks_router)
 
 @app.get("/health")

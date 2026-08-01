@@ -232,7 +232,7 @@ async def user_json(identifier):
             console.print(f"[red]❌ Ошибка: Невозможно сгенерировать конфиг, так как UUID равен NULL.[/red]")
             return
 
-        # Получаем статус подписки
+        # Получаем статус подписки (можно оставить для информативности)
         sub_result = await session.execute(
             text("SELECT status, expires_at FROM subscriptions WHERE user_id = :uid ORDER BY expires_at DESC LIMIT 1"),
             {"uid": db_id}
@@ -240,8 +240,6 @@ async def user_json(identifier):
         sub_row = sub_result.fetchone()
         status = sub_row[0] if sub_row else "unknown"
         expires_at = sub_row[1] if sub_row else None
-
-        # Красивое форматирование даты
         expires_str = expires_at.strftime("%Y-%m-%d %H:%M UTC") if expires_at else "infinity"
 
         console.print(f"\n📋 [bold white]Профиль инспекции для '{identifier}':[/bold white]")
@@ -249,36 +247,30 @@ async def user_json(identifier):
             console.print(f"   • TG: @{tg_username} (ID: {tg_user_id})")
         else:
             console.print(f"   • DB ID: {db_id}")
-
         status_color = "green" if status == "active" else "yellow" if status == "provisioning" else "red"
         console.print(f"   • Статус в БД: [{status_color}]{status}[/]")
         console.print(f"   • Истекает: [magenta]{expires_str}[/magenta]")
         console.print(f"   • Ключ UUID: [cyan]{hiddify_uuid}[/cyan]\n")
 
-        # Вызов внешнего рендерера
+        # Генерация конфига через сервис
         try:
-            from app.routers.sub_render import generate_singbox_json
+            from backend.app.services.sub_render import generate_singbox_json
             json_config = await generate_singbox_json(str(hiddify_uuid), session)
 
-            # console.print("[bold magenta]📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):[/bold magenta]")
             console.print("📄 СТРУКТУРИРОВАННЫЙ JSON-КОНФИГ SING-BOX (Reality + xHTTP):")
             console.print("─" * 100)
-
-            # ИСПРАВЛЕНО: Вместо json.dumps используем встроенный Rich-компонент,
-            # который автоматически раскрасит ключи, строки и числа для удобства чтения в терминале
             if isinstance(json_config, dict):
                 raw_json_str = json.dumps(json_config, ensure_ascii=False, indent=2)
                 syntax = Syntax(raw_json_str, "json", theme="monokai_", line_numbers=True)
-                # syntax = Syntax(raw_json_str, "json", line_numbers=True)
                 console.print(syntax)
             else:
                 console.print(f"[yellow]⚠️ Рендерер вернул не словарь, а: {type(json_config)}[/yellow]")
                 console.print(str(json_config))
-
             console.print("─" * 100 + "\n")
-
+        except ValueError as e:
+            console.print(f"[red]❌ {e}[/red]")
         except Exception as e:
-            console.print(f"[bold red]❌ Ошибка вызова генератора singbox конфигурации: {e}[/bold red]")
+            console.print(f"[bold red]❌ Ошибка генерации конфига: {e}[/bold red]")
 
 # ============================================================
 # ⏳ КОМАНДА: ИНСПЕКТОР СТАТУСА ПОДПИСОК (SUB) + LIVE API HFM
@@ -394,3 +386,18 @@ async def user_subscription_status(identifier):
 
         console.print(table)
         console.print("")
+
+async def _resolve_uuid(session, identifier: str) -> str | None:
+    from sqlalchemy import text
+    # Попробуем интерпретировать как UUID
+    query = text("""
+        SELECT hiddify_uuid FROM users
+        WHERE hiddify_uuid = :val
+           OR email = :val
+           OR tg_user_id::text = :val
+           OR id::text = :val
+        LIMIT 1
+    """)
+    res = await session.execute(query, {"val": identifier.strip()})
+    row = res.fetchone()
+    return row[0] if row else None

@@ -8,7 +8,7 @@ async def find_user_by_identifier(session, identifier: str):
     Возвращает кортеж (tg_username, tg_user_id, hiddify_uuid, db_id) или None.
     """
     row = None
-    print(f"DEBUG find_user_by_identifier: identifier={repr(identifier)}")
+    # print(f"DEBUG find_user_by_identifier: identifier={repr(identifier)}")
     # 1. По email (содержит @)
     if "@" in identifier:
         res = await session.execute(
@@ -38,7 +38,7 @@ async def find_user_by_identifier(session, identifier: str):
                 {"tg_id": num}
             )
             row = res.fetchone()
-            print(f"DEBUG tg_user_id search: num={num}, row={row}")
+            # print(f"DEBUG tg_user_id search: num={num}, row={row}")
         except Exception as e:
             print(f"DEBUG tg_user_id search ERROR: {e}")
 

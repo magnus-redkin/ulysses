@@ -15,7 +15,7 @@ build/
 .git_old/
 
 topology.json
-ulysses-backend/app/private/
+backend/app/private/
 
 # Виртуальное окружение
 .venv/

@@ -21,7 +21,15 @@ h2 {
   font-weight: 600;   /* font-semibold */
   color: #94a3b8 !important; /* Slate 400 — спокойный серо-голубой */
   margin-top: 2rem;
-  margin-bottom: 0.2rem;
+  margin-bottom: 1rem;
+}
+
+h3 {
+  font-size: 1.0rem;  /* text-2xl */
+  font-weight: 600;   /* font-semibold */
+  color: #94a3b8 !important; /* Slate 400 — спокойный серо-голубой */
+  margin-top: 2rem;
+  margin-bottom: 1rem;
 }
 
 /* Глобальный стиль для обычного текста (абзацев) */
@@ -34,7 +42,7 @@ p {
 
 /* Глобальный стиль для ссылок */
 a {
-  color: #7dd3fc !important;       /* Sky 300 — мягкий голубой */
+  color: #7dd3fc important;       /* Sky 300 — мягкий голубой */
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease, text-decoration 0.2s ease;
