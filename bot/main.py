@@ -1,50 +1,57 @@
-#!/usr/bin/env python3
-"""
-Ulysses VPN Bot — Main Application Runtime Bootstrapper
-"""
 import asyncio
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, MenuButtonCommands
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 from bot.config import BOT_TOKEN, logger
 from bot.handlers import common, billing
 
-# Strict default configuration rules to prevent cross-site layout injection faults
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+async def set_bot_commands(bot: Bot):
+    """Регистрация списка команд в большой синей кнопке 'Меню' на двух языках."""
+    # Команды по умолчанию (для английского языка и всех остальных локалей)
+    commands_en = [
+        BotCommand(command="start", description="Main menu and status"),
+        BotCommand(command="lang", description="Change interface language"),
+        BotCommand(command="balance", description="Check subscription & traffic balance"),
+        BotCommand(command="support", description="Contact tech support")
+    ]
+
+    # Команды для русскоязычных пользователей
+    commands_ru = [
+        BotCommand(command="start", description="Главное меню и статус VPN"),
+        BotCommand(command="lang", description="Изменить язык интерфейса"),
+        BotCommand(command="balance", description="Проверить баланс трафика"),
+        BotCommand(command="support", description="Связаться с техподдержкой")
+    ]
+
+    try:
+        # Устанавливаем дефолтные английские команды
+        await bot.set_my_commands(commands=commands_en, scope=BotCommandScopeAllPrivateChats())
+
+        # Устанавливаем русские команды конкретно для локали 'ru'
+        await bot.set_my_commands(commands=commands_ru, scope=BotCommandScopeAllPrivateChats(), language_code="ru")
+
+        logger.info("✅ Bot commands successfully registered in the Telegram Menu button.")
+    except Exception as e:
+        logger.error(f"❌ Failed to set bot commands: {e}")
 
 async def main():
-    try:
-        bot_info = await bot.get_me()
-        logger.info(f"🤖 Клиентский хаб маршрутизации запущен @{bot_info.username}")
-    except Exception as e:
-        logger.error(f"❌ Не удалось подключиться к серверам Telegram: {e}")
-        return
+    logger.info("Starting Ulysses VPN Telegram Bot...")
 
-    commands = [
-        BotCommand(command="start", description="📱 Главное меню"),
-        BotCommand(command="balance", description="📊 Проверить баланс трафика"),
-        BotCommand(command="buy", description="🛒 Купить / Продлить доступ"),
-        BotCommand(command="support", description="🆘 Написать в техподдержку")
-    ]
-    await bot.set_my_commands(commands)
-    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher()
 
-    # 🌟 ИСПРАВЛЕНО: Роутер платежей биллинга обязан подключаться ПЕРВЫМ!
-    # Тогда общие хэндлеры common не будут перехватывать его callback-сигналы.
-    dp.include_router(billing.router)
+    # Регистрация роутеров хэндлеров
     dp.include_router(common.router)
+    dp.include_router(billing.router)
 
-    logger.info("🚀 Ulysses Core тонкий клиент запущен и опрашивает updates...")
+    # Автоматически обновляем список команд в синей кнопке при каждом запуске
+    await set_bot_commands(bot)
+
+    # Пропуск накопившихся апдейтов и запуск пуллинга
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Thin-client polling loops systematically halted.")
-    except Exception as fatal_exception:
-        print(f"❌ Critical runtime core failure notification event tracking log: {fatal_exception}")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")

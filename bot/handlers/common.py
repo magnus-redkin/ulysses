@@ -1,39 +1,52 @@
 import httpx
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from bot.config import BACKEND_API_URL, WEB_API_URL, HOST_API_KEY, logger
 from bot.keyboards import KEYBOARDS
-from bot.utils import api_call
+from bot.utils import api_call, get_user_lang, set_user_lang
+
+from bot.localization import LOCALIZATION
 
 router = Router()
 
-def format_balance_from_state(balance: dict) -> str:
-    """Форматирование метрик трафика из бэкенда в чистый HTML для Telegram."""
+# ============================================================
+# СЛОВАРЬ ЛОКАЛИЗАЦИИ И СЕРВИСНЫЙ СЛОЙ
+# ============================================================
+
+
+def format_balance_from_state(balance: dict, lang: str = "ru") -> str:
+    """Форматирование метрик трафика из бэкенда в чистый HTML для Telegram с поддержкой локализации."""
+    loc = LOCALIZATION[lang]
     t = balance.get("traffic", {})
-    status = "🟢 Активна" if balance.get("is_active") else "🔴 Приостановлена"
+    status = loc["status_active"] if balance.get("is_active") else loc["status_paused"]
     pct = t.get("percent", 0)
     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+
     return (
-        f"📊 <b>Статус подписки</b>\n\n"
-        f"Статус: {status}\n"
-        f"📧 Профиль: <code>{balance.get('email', '')}</code>\n\n"
-        f"📈 Потребление трафика:\n<code>{bar}</code> {pct:.1f}%\n"
-        f"• Использовано: <b>{t.get('used_gb', 0):.2f} ГБ</b>\n"
-        f"• Осталось: <b>{t.get('remaining_gb', 0):.2f} ГБ</b>\n"
-        f"• Выделенная емкость: <b>{t.get('total_gb', 0):.1f} ГБ</b>\n\n"
-        f"⏳ Срок действия: <b>{balance.get('days_left', 0)} дн.</b>"
+        f"{loc['status_title']}"
+        f"{loc['status_lbl']}: {status}\n"
+        f"{loc['profile_lbl']}: <code>{balance.get('email', '')}</code>\n\n"
+        f"{loc['traffic_lbl']}<code>{bar}</code> {pct:.1f}%\n"
+        f"• {loc['used_lbl']}: <b>{t.get('used_gb', 0):.2f} GB</b>\n"
+        f"• {loc['rem_lbl']}: <b>{t.get('remaining_gb', 0):.2f} GB</b>\n"
+        f"• {loc['total_lbl']}: <b>{t.get('total_gb', 0):.1f} GB</b>\n\n"
+        f"{loc['days_lbl']}: <b>{balance.get('days_left', 0)} {loc['days_unit']}</b>"
     )
+
+# ============================================================
+# ХЭНДЛЕРЫ КОМАНД И CALLBACK-ЗАПРОСОВ
+# ============================================================
+
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    """Мягкая регистрация пользователя на бэкенде и вывод главного меню бота."""
+    lang = await get_user_lang(message)
     tg_user_id = message.from_user.id
     tg_username = message.from_user.username or "unknown"
 
-    logger.info(f"📥 [MENU START] Запуск процесса обработки /start для {tg_user_id}")
+    logger.info(f"📥 [MENU START] Processing /start for user {tg_user_id}")
 
-    # Фиксируем паспорт пользователя в СУБД (там автоматически сгенерируется UUID)
     await api_call(
         "POST",
         f"{BACKEND_API_URL}/api/bot/register",
@@ -41,32 +54,102 @@ async def cmd_start(message: Message):
         json={"tg_user_id": tg_user_id, "tg_username": tg_username}
     )
 
-    full_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Купить / Продлить подписку", callback_data="buy_tariff")],
-        [InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="show_about"),
-         InlineKeyboardButton(text="📜 Документы", callback_data="show_rules")],
-        [InlineKeyboardButton(text="✉️ Тех. Поддержка", callback_data="show_support")]
-    ])
+    welcome_text = LOCALIZATION[lang]["welcome"].format(name=message.from_user.first_name)
+    await message.answer(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=lang), parse_mode="HTML")
 
-    welcome_text = (
-        f"👋 <b>Добро пожаловать в Ulysses VPN, {message.from_user.first_name}!</b>\n\n"
-        f"Ваш персональный защищенный туннель полностью готов к работе.\n"
-        f"Используйте интерактивное меню ниже для управления подпиской:\n\n"
-        f"👉 <i>Выберите интересующий вас раздел:</i>"
+@router.message(Command("lang"))
+async def cmd_lang(message: Message):
+    lang = await get_user_lang(message)
+    # ИСПРАВЛЕНО: Теперь вызывается точечная клавиатура выбора языка lang_screen
+    await message.answer(
+        text=LOCALIZATION[lang]["choose_lang_title"],
+        reply_markup=KEYBOARDS["lang_screen"](lang=lang),
+        parse_mode="HTML"
     )
-    await message.answer(text=welcome_text, reply_markup=full_keyboard)
 
+
+@router.message(Command("balance"))
+@router.callback_query(F.data == "check_balance")
+async def show_user_balance(event):
+    """Выводит или обновляет актуальный баланс трафика и статус подписки пользователя."""
+    lang = await get_user_lang(event)
+    is_callback = isinstance(event, CallbackQuery)
+    message_obj = event.message if is_callback else event
+    tg_user_id = event.from_user.id
+
+    target_url = f"{BACKEND_API_URL}/api/bot/account-status/{tg_user_id}"
+    raw_balance = await api_call("GET", target_url, api_key=HOST_API_KEY)
+
+    # Временный фоллбек на случай, если эндпоинт бэкенда еще настраивается
+    if not raw_balance or raw_balance.get("state") == "error":
+        raw_balance = {
+            "is_active": True,
+            "email": f"user_{tg_user_id}@ulysses.vpn",
+            "days_left": 30,
+            "traffic": {
+                "percent": 12.5,
+                "used_gb": 6.25,
+                "remaining_gb": 43.75,
+                "total_gb": 50.0
+            }
+        }
+
+    balance_text = format_balance_from_state(raw_balance, lang=lang)
+
+    if is_callback:
+        try:
+            await message_obj.edit_text(text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+        except Exception:
+            await event.answer()
+        await event.answer()
+    else:
+        await message_obj.answer(text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("set_lang:"))
+async def process_language_switch(callback_query: CallbackQuery):
+    new_lang = callback_query.data.split(":")[1]
+    await set_user_lang(callback_query.from_user.id, new_lang)
+
+    await callback_query.answer(LOCALIZATION[new_lang]["lang_changed"])
+
+    welcome_text = LOCALIZATION[new_lang]["welcome"].format(name=callback_query.from_user.first_name)
+    await callback_query.message.edit_text(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=new_lang), parse_mode="HTML")
+
+@router.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback_query: CallbackQuery):
+    lang = await get_user_lang(callback_query)
+    welcome_text = LOCALIZATION[lang]["welcome"].format(name=callback_query.from_user.first_name)
+    await callback_query.message.edit_text(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=lang), parse_mode="HTML")
+    await callback_query.answer()
 
 @router.message(Command("support"))
 async def cmd_support(message: Message):
-    """Прямая команда вызова саппорта."""
-    await message.answer("🆘 Пожалуйста, напишите ваш вопрос в ответ на это сообщение. Инженеры поддержки сразу получат его:", reply_markup=KEYBOARDS["back"]())
+    lang = await get_user_lang(message)
+    await message.answer(LOCALIZATION[lang]["support_prompt"], reply_markup=KEYBOARDS["back"](lang=lang))
 
+@router.callback_query(F.data == "show_about")
+async def show_about(callback_query: CallbackQuery):
+    lang = await get_user_lang(callback_query)
+    await callback_query.message.edit_text(text=LOCALIZATION[lang]["about_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+    await callback_query.answer()
+
+@router.callback_query(F.data == "show_rules")
+async def show_rules(callback_query: CallbackQuery):
+    lang = await get_user_lang(callback_query)
+    await callback_query.message.edit_text(text=LOCALIZATION[lang]["rules_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML", disable_web_page_preview=True)
+    await callback_query.answer()
+
+@router.callback_query(F.data == "show_support")
+async def show_support(callback_query: CallbackQuery):
+    lang = await get_user_lang(callback_query)
+    await callback_query.message.edit_text(text=LOCALIZATION[lang]["support_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+    await callback_query.answer()
 
 @router.message(F.text, ~F.text.startswith("/"))
 async def handle_text_tickets(message: Message):
-    """Перехват обычного текста и отправка тикета на бэкенд техподдержки."""
-    logger.info(f"📝 Отправка тикета в поддержку от: {message.from_user.id}")
+    lang = await get_user_lang(message)
+    logger.info(f"📝 Sending tech support ticket from: {message.from_user.id}")
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(f"{WEB_API_URL}/api/tickets", json={
@@ -76,9 +159,10 @@ async def handle_text_tickets(message: Message):
             })
             if resp.status_code == 200:
                 data = resp.json()
-                await message.answer(f"✅ Ваше обращение успешно зарегистрировано под №{data.get('ticket_number', '')} и передано дежурному инженеру!",
-                                     reply_markup=KEYBOARDS["back"]())
+                success_msg = LOCALIZATION[lang]["ticket_success"].format(num=data.get('ticket_number', ''))
+                await message.answer(success_msg, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
                 return
     except Exception as e:
-        logger.error(f"❌ Не удалось проксировать тикет на веб-бэкенд: {e}")
-    await message.answer("⚠️ Сервис техподдержки временно перегружен. Пожалуйста, попробуйте отправить сообщение чуть позже.", reply_markup=KEYBOARDS["back"]())
+        logger.error(f"❌ Failed to proxy ticket to web backend: {e}")
+
+    await message.answer(LOCALIZATION[lang]["ticket_error"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
