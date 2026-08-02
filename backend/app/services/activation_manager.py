@@ -82,7 +82,8 @@ async def get_or_create_user(
             {"email": email, "uuid": new_uuid, "tg_id": tg_user_id}
         )
         user_id = res_user.scalar_one()
-        await db.commit()
+        # await db.commit()
+        await db.flush()
         logger.info(f"👤 Создан новый пользователь: id={user_id}, uuid={new_uuid}")
         return {
             "user_id": user_id,

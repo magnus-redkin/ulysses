@@ -3,7 +3,7 @@
 """
 import httpx
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
@@ -53,7 +53,8 @@ async def get_user_balance(
         {"uid": user["user_id"]}
     )
     sub = sub_res.fetchone()
-    now = datetime.utcnow()
+    # now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if not sub:
         return {
             "status": "disabled",

@@ -20,8 +20,8 @@ async def handle_platega_webhook(headers: dict, body_str: str) -> Response:
     Строго валидирует подпись и исключает состояние гонки в СУБД.
     """
     # Пишем сырые логи для дебага
-    with open('/tmp/webhook.log', 'a') as f:
-        f.write(f'=== WEBHOOK ===\nHeaders: {headers}\nBody: {body_str}\n\n')
+    # with open('/tmp/webhook.log', 'a') as f:
+    #     f.write(f'=== WEBHOOK ===\nHeaders: {headers}\nBody: {body_str}\n\n')
 
     # ИСПРАВЛЕНО: Приводим ключи заголовков к нижнему регистру для стабильности Fastapi/Nginx
     normalized_headers = {k.lower(): v for k, v in headers.items()}

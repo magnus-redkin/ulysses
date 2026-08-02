@@ -14,7 +14,7 @@ class AezaApiClient:
     def __init__(self):
         # API Ключ берется из переменных окружения .env
         self.api_key = getattr(settings, "AEZA_API_KEY", "MOCK_TOKEN")
-        self.base_url = "https: / / my.aeza.net / api / v1 / "
+        self.base_url = "https://my.aeza.net/api/v1/"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Accept": "application/json"
@@ -25,7 +25,7 @@ class AezaApiClient:
         Запрашивает полный список активных услуг (VPS) из личного кабинета Aéza.
         """
         # Эндпоинт получения списка серверов
-        target_url = f"{self.base_url}services / vps"
+        target_url = f"{self.base_url}services/vps"
         logger.info(f"📡 [AEZA API] Запрос состояния серверов ➔ {target_url}")
 
         try:

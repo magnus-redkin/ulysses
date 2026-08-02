@@ -22,8 +22,6 @@ from app.routers.billing import router as billing_router
 # from app.routers.admin import router as admin_router
 # from app.routers.test_billing import router as test_billing_router
 from app.routers.sub_render import router as sub_render_router
-from app.routers.webhooks import router as webhooks_router
-
 
 # Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
 @asynccontextmanager
@@ -43,11 +41,22 @@ async def log_all_requests(request: Request, call_next):
 
 
 # Настройки CORS для работы фронтенда
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://ulysses.best",
+        "https://web.telegram.org",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -57,7 +66,6 @@ app.include_router(user_router)
 app.include_router(billing_router)
 # app.include_router(admin_router)
 app.include_router(sub_render_router)
-app.include_router(webhooks_router)
 
 @app.get("/health")
 async def health_check():

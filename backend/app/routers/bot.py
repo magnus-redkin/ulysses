@@ -343,6 +343,7 @@ async def bot_action(
         tariff_config = tariffs.get(tariff_slug, {})
         total_gb = float(tariff_config.get("traffic_gb", 10.0 if tariff_slug == "sub_free" else 500.0))
 
+        # TODO:
         # Заглушка (в будущем тут будет SELECT SUM из brain.telemetry)
         used_gb = 2.15 if is_active else 0.0
         remaining_gb = max(0.0, total_gb - used_gb)

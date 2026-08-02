@@ -36,7 +36,7 @@ class AezaInfrastructureSync:
             self.api_key = f"{aeza_num}_{raw_key}"
 
         # Верифицированный базовый эндпоинт услуг v1
-        self.target_url = "https: / / my.aeza.net / api / services"
+        self.target_url = "https://my.aeza.net/api/services"
 
         self.headers = {
             "X-API-Key": self.api_key,
@@ -90,7 +90,7 @@ class AezaInfrastructureSync:
 
                         # 🟢 СВЕРХ-УМНЫЙ ШАГ ПОДДЕРЖКИ: Запрашиваем дополнительные IP через API v2 эндпоинт
                         # https://aeza.net{id}/networks/ipv4
-                        v2_network_url = f"https: / / my.aeza.net / api / v2 / services / {vps_internal_id} / networks / ipv4"
+                        v2_network_url = f"https://my.aeza.net/api/v2/services/{vps_internal_id}/networks/ipv4"
                         v2_clean_url = v2_network_url.replace(" ", "")
 
                         try:

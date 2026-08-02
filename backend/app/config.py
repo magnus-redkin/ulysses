@@ -61,8 +61,8 @@ class Settings(BaseSettings):
     AEZA_NUMBER: str = ""
     AEZA_API_KEY: str = ""
 
-    PLATEGA_MERCHANT_ID: str = "default-merchant-id"
-    PLATEGA_API: str = "default-api-key"
+    PLATEGA_MERCHANT_ID: str = ""
+    PLATEGA_API: str = ""
 
 
     DECOY_SITE: str = ""

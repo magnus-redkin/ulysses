@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, BigInteger, Float, DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -17,8 +17,8 @@ class User(Base):
     # Бессмертный UUID для Hiddify переехал сюда (генерируется один раз для пользователя)
     hiddify_uuid = Column(UUID(as_uuid=True), unique=True, nullable=True, default=uuid.uuid4)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     # Связи
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
@@ -40,8 +40,8 @@ class Subscription(Base):
     # Даты
     starts_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     # Provisioning поля
     provisioning_attempts = Column(Integer, default=0)
@@ -84,8 +84,8 @@ class PaymentAttempt(Base):
     provider_tx_id = Column(String(255), nullable=True)
 
     # Даты
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     # Связи
     user = relationship("User", back_populates="payment_attempts")

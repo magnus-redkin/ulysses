@@ -3,8 +3,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.app.database import get_db
-from backend.app.services.sub_render import generate_singbox_json
+from app.database import get_db
+from app.services.sub_render import generate_singbox_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Subscription Render"])

@@ -5,8 +5,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.app.config import settings
-from backend.app.services.hiddify_client import HiddifyProvisioner
+from app.config import settings
+from app.services.hiddify_client import HiddifyProvisioner
 
 logger = logging.getLogger(__name__)
 
