@@ -9,9 +9,7 @@
   const t = $derived({
     title: locale.current === 'ru' ? 'Выберите тариф' : 'Choose your plan',
     emailLabel: locale.current === 'ru' ? 'Ваш Email' : 'Your Email',
-    confirmEmailLabel: locale.current === 'ru' ? 'Подтвердите Email' : 'Confirm Email',
     submitBtn: locale.current === 'ru' ? 'Продолжить' : 'Continue',
-    errorMatch: locale.current === 'ru' ? 'Email адреса не совпадают' : 'Emails do not match',
     errorInvalid: locale.current === 'ru' ? 'Некорректный формат Email' : 'Invalid email format',
     errorSelectPlan: locale.current === 'ru' ? 'Пожалуйста, выберите тариф' : 'Please select a plan',
     loading: locale.current === 'ru' ? 'Загрузка тарифов...' : 'Loading plans...',
@@ -87,15 +85,11 @@
 
   let selectedPlan = $state('');
   let email = $state('');
-  let confirmEmail = $state('');
   let isSubmitting = $state(false);
 
-  // Валидация
   let isEmailValid = $derived(/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email));
-  let doEmailsMatch = $derived(email === confirmEmail);
-  let isFormValid = $derived(selectedPlan && isEmailValid && doEmailsMatch && !isSubmitting);
+  let isFormValid = $derived(selectedPlan && isEmailValid && !isSubmitting);
 
-  // Реактивная переменная: нужно ли подсвечивать поле Email прямо сейчас
   let shouldHighlightEmail = $derived(selectedPlan !== '' && email === '');
 
   function handleSubmit() {
@@ -103,6 +97,7 @@
       isSubmitting = true;
     }
   }
+
 
   // Гарантированный автовыбор бесплатного тарифа при переходе по ссылке ?plan=free
   $effect(() => {
@@ -182,10 +177,9 @@
         <p class="text-amber-400 text-sm text-center font-medium">{t.errorSelectPlan}</p>
       {/if}
 
-      <!-- Блок полей ввода Email -->
+      <!-- Одно поле Email -->
       <div class="space-y-4 max-w-md mx-auto pt-6 border-t border-gray-800">
         <div>
-          <!-- Включение цвета при активации подсветки -->
           <label for="email" class="block text-sm font-medium mb-1 transition-colors {shouldHighlightEmail ? 'text-emerald-400 font-bold' : 'text-gray-400'}">
             {t.emailLabel}
           </label>
@@ -197,7 +191,6 @@
             required
             autocomplete="off"
             placeholder="your@email.com"
-            /* Подсветка поля: рамка, тень и мягкий бесконечный цикл пульсации */
             class="w-full bg-gray-900 border rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all
               {shouldHighlightEmail
                 ? 'border-emerald-500 ring-4 ring-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)] animate-[pulse_2s_infinite]'
@@ -208,24 +201,7 @@
           {/if}
         </div>
 
-        <div>
-          <label for="confirmEmail" class="block text-sm font-medium text-gray-400 mb-1">{t.confirmEmailLabel}</label>
-          <input
-            id="confirmEmail"
-            type="email"
-            bind:value={confirmEmail}
-            required
-            disabled={!isEmailValid || isSubmitting}
-            autocomplete="off"
-            placeholder="your@email.com"
-            class="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          {#if confirmEmail && !doEmailsMatch}
-            <p class="text-red-400 text-xs mt-1 font-medium">{t.errorMatch}</p>
-          {/if}
-        </div>
-
-        <!-- Кнопка отправки формы -->
+        <!-- Кнопка отправки -->
         <button
           type="submit"
           disabled={!isFormValid}
@@ -236,24 +212,19 @@
           {isSubmitting ? '⏳ ' + t.submitting : t.submitBtn}
         </button>
 
-        <!-- Обработка успешного ответа сервера -->
+        <!-- Сообщения об успехе/ошибке – без изменений -->
         {#if form?.success}
           <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4 text-center">
             <p class="text-emerald-400 font-medium">✓ {form.message}</p>
             {#if form.order_id}
-              <p class="text-gray-400 text-sm mt-1">
-                {t.orderId}: {form.order_id}
-              </p>
+              <p class="text-gray-400 text-sm mt-1">{t.orderId}: {form.order_id}</p>
             {/if}
             {#if form.amount}
-              <p class="text-gray-400 text-sm">
-                {t.amount}: ${form.amount}
-              </p>
+              <p class="text-gray-400 text-sm">{t.amount}: ${form.amount}</p>
             {/if}
           </div>
         {/if}
 
-        <!-- Обработка ошибок сервера -->
         {#if form?.error}
           <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-center">
             <p class="text-red-400 font-medium">✕ {form.error}</p>

@@ -73,8 +73,12 @@ async def get_user_balance(
     tariff_slug, status, expires_at = sub
     days_left = 0
     if expires_at:
-        expires_naive = expires_at.replace(tzinfo=None) if expires_at.tzinfo else expires_at
-        days_left = max(0, (expires_naive - now).days)
+    # Приводим expires_at к aware UTC
+        if expires_at.tzinfo is None:
+            expires_aware = expires_at.replace(tzinfo=timezone.utc)
+        else:
+            expires_aware = expires_at.astimezone(timezone.utc)
+        days_left = max(0, (expires_aware - now).days)
 
     is_active = status == "active" and days_left > 0
     traffic_data = await _get_hiddify_traffic(user["hiddify_uuid"]) or {

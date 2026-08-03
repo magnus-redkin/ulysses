@@ -54,7 +54,8 @@ export const actions = {
         return fail(response.status, { error: errorData.detail || 'Backend error' });
       }
 
-      const result = await response.json();
+        const result = await response.json();
+        console.log('CREATE INVOICE RESPONSE:', JSON.stringify(result, null, 2));
 
       // Если статус подразумевает успешное создание подписки
       if (result.status === 'free_tariff' || result.status === 'success') {

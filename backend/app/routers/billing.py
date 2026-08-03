@@ -52,8 +52,8 @@ async def get_tariffs_endpoint():
 @router.post("/create-invoice")
 async def create_invoice(
     payload: InvoiceCreate,
-    db: AsyncSession = Depends(get_db),
-    api_key: str = Depends(verify_api_key)
+    db: AsyncSession = Depends(get_db)
+    # api_key: str = Depends(verify_api_key)
 ):
     """Создание инвойса (требует X-API-Key)."""
     try:

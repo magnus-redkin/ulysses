@@ -19,7 +19,8 @@ h1 {
 h2 {
   font-size: 1.5rem;  /* text-2xl */
   font-weight: 600;   /* font-semibold */
-  color: #94a3b8 !important; /* Slate 400 — спокойный серо-голубой */
+  /* color: #94a3b8 !important; /\* Slate 400 — спокойный серо-голубой *\/ */
+  color: #f8fafc !important; /* Slate 50 —  */
   margin-top: 2rem;
   margin-bottom: 1rem;
 }

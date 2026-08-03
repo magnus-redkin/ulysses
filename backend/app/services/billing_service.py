@@ -60,6 +60,7 @@ async def create_invoice_logic(
         result = await create_free_subscription(db, user)
         return {
             "status": "free_tariff",
+            "hiddify_uuid": user["hiddify_uuid"],
             "subscription_link": result["subscription_link"],
             "expires_at": result["expires_at"],
             "order_id": None
@@ -103,6 +104,7 @@ async def create_invoice_logic(
 
         return {
             "status": "payment_required",
+            "hiddify_uuid": user["hiddify_uuid"],
             "payment_url": payment_url,
             "order_id": str(new_attempt.id),
             "amount": amount

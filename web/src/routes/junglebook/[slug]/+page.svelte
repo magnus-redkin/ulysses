@@ -16,6 +16,7 @@
 
       { slug: 'how-to-choose-vpn', title: 'Как выбрать VPN?', chapter: true },
 
+      { slug: 'client', title: 'Настройки клиента Hiddify', chapter: true },
     // Глава 2
       { slug: 'hiddify', title: 'Экосистема Hiddify - универсальный комбайн', chapter: true },
       { slug: 'hiddify-philosophy', title: ' - философия Hiddify' },

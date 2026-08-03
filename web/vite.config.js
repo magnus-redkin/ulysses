@@ -16,6 +16,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 export default defineConfig({
     plugins: [tailwindcss(), sveltekit()],
+    envDir: '../',
     server: {
         port: 5173,
 	strictPort: true,

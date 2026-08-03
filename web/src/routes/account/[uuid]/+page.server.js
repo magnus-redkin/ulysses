@@ -1,10 +1,14 @@
 import { error } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
+const API_KEY = env.HOST_API_KEY;
 
 const BACKEND_URL = 'http://localhost:8000';
 
 export async function load({ params, fetch }) {
   const uuid = params.uuid;
-  const response = await fetch(`${BACKEND_URL}/api/user/balance?hiddify_uuid=${uuid}`);
+    const response = await fetch(`${BACKEND_URL}/api/user/balance?hiddify_uuid=${uuid}`, {
+        headers: { 'X-API-Key': API_KEY }
+    });
 
   if (!response.ok) {
     if (response.status === 404) throw error(404, `Account not found: ${uuid}`);
