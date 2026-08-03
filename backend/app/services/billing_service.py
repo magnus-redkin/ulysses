@@ -10,6 +10,8 @@ from app.services.activation_manager import get_or_create_user, get_or_create_su
 from app.services.free_subscription import create_free_subscription
 from app.platega.platega_service import PlategaPaymentService
 
+from app.services.email_service import email_service
+
 logger = logging.getLogger(__name__)
 
 async def create_invoice_logic(
@@ -58,6 +60,20 @@ async def create_invoice_logic(
         logger.info(f"DEBUG user from get_or_create_user 2: {user}")
 
         result = await create_free_subscription(db, user)
+        try:
+            to_email = user.get("email")
+            if to_email and "@" in to_email and not to_email.endswith(".internal"):
+                subject, html_body, text_body = email_service.get_welcome_email(to_email, user["hiddify_uuid"])
+                sent = await email_service.send_email(to_email, subject, html_body, text_body)
+                if sent:
+                    logger.info(f"📧 Приветственное письмо отправлено на {to_email}")
+                else:
+                    logger.warning(f"⚠️ Не удалось отправить письмо на {to_email}")
+            else:
+                logger.info(f"ℹ️ Пропуск отправки письма (email={to_email})")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при отправке приветственного письма: {e}")
+
         return {
             "status": "free_tariff",
             "hiddify_uuid": user["hiddify_uuid"],

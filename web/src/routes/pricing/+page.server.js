@@ -59,12 +59,18 @@ export const actions = {
 
       // Если статус подразумевает успешное создание подписки
       if (result.status === 'free_tariff' || result.status === 'success') {
+        // Бесплатный тариф – не редиректим, показываем сообщение о письме
+        return {
+          success: true,
+          message: 'Check your email for the subscription link' // или локализованная строка
+        };
+
         // Перенаправляем на персональную страницу
-        let uuid = result.hiddify_uuid;
-        if (!uuid) {
-          return fail(500, { error: 'No account identifier returned from backend' });
-        }
-        throw redirect(302, `/account/${uuid}`);
+        // let uuid = result.hiddify_uuid;
+        // if (!uuid) {
+        //   return fail(500, { error: 'No account identifier returned from backend' });
+        // }
+        // throw redirect(302, `/account/${uuid}`);
       }
 
       // Если ошибка – возвращаем форму с ошибкой
