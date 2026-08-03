@@ -15,6 +15,8 @@ from app.dependencies import verify_api_key
 from app.services.billing_service import create_invoice_logic
 from app.services.activation_manager import get_tariffs
 
+from app.services.user_service import get_user_balance
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bot", tags=["bot"])
@@ -214,7 +216,7 @@ async def bot_action(
         }
         selected_currency = currency_map.get(payment_type, "RUB")
 
-        # ИСПРАВЛЕНО: Прямой асинхронный вызов логики биллинга без паразитного HTTP-трафика на localhost
+        # Прямой асинхронный вызов логики биллинга без паразитного HTTP-трафика на localhost
         try:
             result = await create_invoice_logic(
                 db=db,
@@ -287,80 +289,22 @@ async def bot_action(
             }
 
     # ============================================================
-    # 🌟 ДОБАВЛЕНО: КОНТУР ПРОСМОТРА БАЛАНСА И ТРАФИКА
+    # 🌟 ПРОСМОТР БАЛАНСА И ТРАФИКА
     # ============================================================
+
     elif action == "check_balance":
         logger.info(f"📊 [БЭКЕНД] Запрос баланса для tg_user_id={tg_user_id}")
-
-        # 1. Ищем пользователя в СУБД
-        res_user = await db.execute(
-            text("SELECT id, email FROM users WHERE tg_user_id = :tg_id"),
-            {"tg_id": tg_user_id}
-        )
-        user_row = res_user.fetchone()
-        if not user_row:
-            return {"state": "error", "message": "Пользователь не найден в системе.", "keyboard": "back"}
-
-        db_user_id, user_email = user_row
-
-        # 2. Ищем его последнюю подписку
-        res_sub = await db.execute(
-            text("""
-                SELECT status, expires_at, tariff_slug
-                FROM subscriptions WHERE user_id = :uid
-                ORDER BY expires_at DESC LIMIT 1
-            """),
-            {"uid": db_user_id}
-        )
-        sub_row = res_sub.fetchone()
-
-        # Если подписок еще нет
-        if not sub_row:
-            return {
-                "state": "balance",
-                "balance": {
-                    "is_active": False,
-                    "email": user_email or f"tg_{tg_user_id}@ulysses.internal",
-                    "days_left": 0,
-                    "traffic": {"percent": 0.0, "used_gb": 0.0, "remaining_gb": 0.0, "total_gb": 0.0}
-                },
-                "keyboard": "back"
-            }
-
-        sub_status, expires_at, tariff_slug = sub_row
-
-        # Расчет дней
-        days_left = 0
-        if expires_at:
-            from datetime import datetime, timezone
-            expires_aware = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
-            days_left = max(0, (expires_aware - datetime.now(timezone.utc)).days)
-
-        is_active = sub_status == "active" and days_left > 0
-
-        # Читаем лимит из тарифа
-        tariffs = get_tariffs()
-        tariff_config = tariffs.get(tariff_slug, {})
-        total_gb = float(tariff_config.get("traffic_gb", 10.0 if tariff_slug == "sub_free" else 500.0))
-
-        # TODO:
-        # Заглушка (в будущем тут будет SELECT SUM из brain.telemetry)
-        used_gb = 2.15 if is_active else 0.0
-        remaining_gb = max(0.0, total_gb - used_gb)
-        percent = (used_gb / total_gb * 100) if total_gb > 0 else 0.0
+        balance = await get_user_balance(db, tg_user_id=tg_user_id)
+        if not balance:
+            return {"state": "error", "message": get_message("error_api"), "keyboard": "back"}
 
         return {
             "state": "balance",
             "balance": {
-                "is_active": is_active,
-                "email": user_email,
-                "days_left": days_left,
-                "traffic": {
-                    "percent": percent,
-                    "used_gb": used_gb,
-                    "remaining_gb": remaining_gb,
-                    "total_gb": total_gb
-                }
+                "is_active": balance["is_active"],
+                "email": balance["email"],
+                "days_left": balance["days_left"],
+                "traffic": balance["traffic"]
             },
             "keyboard": "back"
         }

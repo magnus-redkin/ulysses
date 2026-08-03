@@ -1,3 +1,5 @@
+# bot/config.py
+
 import os
 import sys
 import logging

@@ -1,3 +1,5 @@
+# bot utils.py
+
 import httpx
 from aiogram.types import Message, CallbackQuery
 from bot.config import logger, BACKEND_API_URL, HOST_API_KEY

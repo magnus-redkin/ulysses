@@ -60,39 +60,28 @@ class EmailService:
             if port not in ports_to_try:
                 ports_to_try.append(port)
 
-        original_getaddrinfo = socket.getaddrinfo
-        socket.getaddrinfo = lambda host, port, family=0, type=0, proto=0, flags=0: original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-
         try:
             for port in ports_to_try:
                 try:
-                    if port == 465:
-                        await aiosmtplib.send(
-                            msg,
-                            hostname=self.smtp_host,
-                            port=port,
-                            username=self.smtp_user,
-                            password=self.smtp_password,
-                            use_tls=True,
-                            tls_context=self.ssl_context,
-                            timeout=15.0,
-                            local_hostname="mail.ulysses.best"
-                        )
-                    else:
-                        await aiosmtplib.send(
-                            msg,
-                            hostname=self.smtp_host,
-                            port=port,
-                            username=self.smtp_user,
-                            password=self.smtp_password,
-                            start_tls=True,
-                            tls_context=self.ssl_context,
-                            timeout=15.0,
-                            local_hostname="mail.ulysses.best"
-                        )
+                    # Инициализируем низкоуровневый SMTP-клиент с принудительным IPv4
+                    smtp_client = aiosmtplib.SMTP(
+                        hostname=self.smtp_host,
+                        port=port,
+                        use_tls=(port == 465),
+                        start_tls=(port != 465),
+                        tls_context=self.ssl_context,
+                        timeout=15.0,
+                        local_hostname="mail.ulysses.best",
+                        source_address=("0.0.0.0", 0)  # Жесткая изоляция сокета на IPv4
+                    )
 
-                    logger.info(f"📧 Письмо отправлено на {to_email} (порт {port})")
-                    socket.getaddrinfo = original_getaddrinfo
+                    # Выполняем асинпо цепочке действий
+                    async with smtp_client:
+                        if self.smtp_user and self.smtp_password:
+                            await smtp_client.login(self.smtp_user, self.smtp_password)
+                        await smtp_client.send_message(msg)
+
+                    logger.info(f"📧 Письмо успешно отправлено на {to_email} через порт {port}")
                     return True
 
                 except Exception as e:
@@ -103,8 +92,10 @@ class EmailService:
                     else:
                         logger.debug(f"Порт {port} не подошёл: {e}")
                         continue
-        finally:
-            socket.getaddrinfo = original_getaddrinfo
+
+
+        except Exception as global_e:
+            logger.error(f"❌ Глобальная ошибка в методе отправки: {global_e}")
 
         logger.error(f"❌ Не удалось отправить письмо на {to_email}")
         return False

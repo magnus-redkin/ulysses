@@ -1,4 +1,8 @@
+# bot/handlers/common.py
+
 import httpx
+import html
+
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -54,8 +58,10 @@ async def cmd_start(message: Message):
         json={"tg_user_id": tg_user_id, "tg_username": tg_username}
     )
 
-    welcome_text = LOCALIZATION[lang]["welcome"].format(name=message.from_user.first_name)
+    safe_name = html.escape(message.from_user.first_name or "User")
+    welcome_text = LOCALIZATION[lang]["welcome"].format(name=safe_name)
     await message.answer(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=lang), parse_mode="HTML")
+
 
 @router.message(Command("lang"))
 async def cmd_lang(message: Message):
@@ -77,22 +83,14 @@ async def show_user_balance(event):
     message_obj = event.message if is_callback else event
     tg_user_id = event.from_user.id
 
-    target_url = f"{BACKEND_API_URL}/api/bot/account-status/{tg_user_id}"
+
+    target_url = f"{BACKEND_API_URL}/api/user/balance?tg_user_id={tg_user_id}"
     raw_balance = await api_call("GET", target_url, api_key=HOST_API_KEY)
 
-    # Временный фоллбек на случай, если эндпоинт бэкенда еще настраивается
-    if not raw_balance or raw_balance.get("state") == "error":
-        raw_balance = {
-            "is_active": True,
-            "email": f"user_{tg_user_id}@ulysses.vpn",
-            "days_left": 30,
-            "traffic": {
-                "percent": 12.5,
-                "used_gb": 6.25,
-                "remaining_gb": 43.75,
-                "total_gb": 50.0
-            }
-        }
+    if not raw_balance:
+        # Если пользователь не найден или ошибка – сообщаем об этом
+        await message_obj.answer("❌ Не удалось получить данные. Попробуйте позже.")
+        return
 
     balance_text = format_balance_from_state(raw_balance, lang=lang)
 

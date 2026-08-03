@@ -1,3 +1,5 @@
+# bot/keyboards.py
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def get_main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:

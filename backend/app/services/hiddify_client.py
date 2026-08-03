@@ -126,18 +126,27 @@ class HiddifyProvisioner:
 
     async def check_user_exists(self, uuid_str: str) -> bool:
         """
-            Проверяет, существует ли профиль с данным UUID в панели Hiddify.
-            """
+        Проверяет, существует ли профиль с данным UUID в панели Hiddify.
+        Делает точечный запрос к эндпоинту пользователя, не нагружая память.
+        """
         clean_uuid = str(uuid_str).strip().lower()
-        target_url = f"{self.base_url}/" # Обращаемся к корню эндпоинта /api/v2/admin/user
+        # Формируем прямой URL к конкретному пользователю
+        target_url = f"{self.base_url}/{clean_uuid}/"
+
         try:
             async with httpx.AsyncClient(timeout=10.0, verify=self.verify_ssl, follow_redirects=True) as client:
                 response = await client.get(target_url, headers=self.headers)
+
+                # Если панель вернула 200 OK, пользователь существует
                 if response.status_code == 200:
-                    users = response.json()
-                    # Ищем совпадение UUID в полученном массиве пользователей
-                    if isinstance(users, list):
-                        return any(str(u.get("uuid", "")).lower() == clean_uuid for u in users)
+                    return True
+
+                # Если вернулся 500 (маскировка 404 для кривых UUID) или честный 404
+                if response.status_code in:
+                    logger.debug(f"Пользователь {clean_uuid} не найден в Hiddify (Статус {response.status_code})")
+                    return False
+
         except Exception as e:
             logger.error(f"❌ Ошибка check_user_exists: {e}")
+
         return False
