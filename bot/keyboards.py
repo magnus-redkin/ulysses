@@ -7,6 +7,7 @@ def get_main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     if lang == "en":
         buttons = [
             [InlineKeyboardButton(text="🚀 Buy / Renew Subscription", callback_data="buy_tariff")],
+            [InlineKeyboardButton(text="ℹ️ Info & Balance", callback_data="check_balance")],
             [InlineKeyboardButton(text="ℹ️ About Service", callback_data="show_about"),
              InlineKeyboardButton(text="📜 Documents / Rules", callback_data="show_rules")],
             [InlineKeyboardButton(text="✉️ Tech Support", callback_data="show_support")],
@@ -15,6 +16,7 @@ def get_main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     else:
         buttons = [
             [InlineKeyboardButton(text="🚀 Купить / Продлить подписку", callback_data="buy_tariff")],
+            [InlineKeyboardButton(text="ℹ️ Информация", callback_data="check_balance")],
             [InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="show_about"),
              InlineKeyboardButton(text="📜 Документы", callback_data="show_rules")],
             [InlineKeyboardButton(text="✉️ Тех. Поддержка", callback_data="show_support")],

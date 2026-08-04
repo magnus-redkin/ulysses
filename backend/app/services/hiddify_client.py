@@ -142,7 +142,7 @@ class HiddifyProvisioner:
                     return True
 
                 # Если вернулся 500 (маскировка 404 для кривых UUID) или честный 404
-                if response.status_code in:
+                if response.status_code in [500, 404]:
                     logger.debug(f"Пользователь {clean_uuid} не найден в Hiddify (Статус {response.status_code})")
                     return False
 

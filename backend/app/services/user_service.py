@@ -1,4 +1,3 @@
-# app/services/user_service.py
 """
 Сервис для работы с пользователями: баланс, трафик, профиль.
 """
@@ -8,7 +7,6 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.services.activation_manager import get_or_create_user
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +17,32 @@ async def get_user_balance(
     email: str = None,
     username: str = None
 ) -> dict | None:
-    """Получить баланс и информацию о подписке пользователя."""
+    """
+    Получить баланс и информацию о подписке пользователя.
+    ИДЕМПОТЕНТНЫЙ МЕТОД: только читает данные из БД, исключая появление фантомов.
+    """
 
-    # 1. Поиск пользователя через AM
+    # 1. Поиск пользователя СТРОГО через SELECT (без автоматического создания)
     user = None
+
     if tg_user_id:
-        user = await get_or_create_user(db, tg_user_id=tg_user_id)
+        res = await db.execute(
+            text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE tg_user_id = :tg_id"),
+            {"tg_id": tg_user_id}
+        )
+        row = res.fetchone()
+        if row:
+            user = {"user_id": row[0], "hiddify_uuid": row[1], "email": row[2], "tg_user_id": row[3]}
+
     elif email:
-        user = await get_or_create_user(db, email=email)
+        res = await db.execute(
+            text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE LOWER(email) = :email"),
+            {"email": str(email).lower().strip()}
+        )
+        row = res.fetchone()
+        if row:
+            user = {"user_id": row[0], "hiddify_uuid": row[1], "email": row[2], "tg_user_id": row[3]}
+
     elif hiddify_uuid:
         res = await db.execute(
             text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE CAST(hiddify_uuid AS TEXT) = :uuid"),
@@ -35,6 +51,7 @@ async def get_user_balance(
         row = res.fetchone()
         if row:
             user = {"user_id": row[0], "hiddify_uuid": row[1], "email": row[2], "tg_user_id": row[3]}
+
     elif username:
         clean = str(username).lower().replace("@", "").strip()
         res = await db.execute(
@@ -45,17 +62,19 @@ async def get_user_balance(
         if row:
             user = {"user_id": row[0], "hiddify_uuid": row[1], "email": row[2], "tg_user_id": row[3]}
 
+    # Если пользователя физически нет в БД – честно выходим, возвращая None (вызовет 404)
     if not user:
+        logger.debug(f"🔍 Пользователь не найден в БД при запросе баланса (tg_id: {tg_user_id}, uuid: {hiddify_uuid})")
         return None
 
-    # 2. Последняя подписка
+    # 2. Получение последней подписки пользователя
     sub_res = await db.execute(
         text("SELECT tariff_slug, status, expires_at FROM subscriptions WHERE user_id = :uid ORDER BY expires_at DESC LIMIT 1"),
         {"uid": user["user_id"]}
     )
     sub = sub_res.fetchone()
-    # now = datetime.utcnow()
     now = datetime.now(timezone.utc)
+
     if not sub:
         return {
             "status": "disabled",
@@ -74,7 +93,6 @@ async def get_user_balance(
     tariff_slug, status, expires_at = sub
     days_left = 0
     if expires_at:
-    # Приводим expires_at к aware UTC
         if expires_at.tzinfo is None:
             expires_aware = expires_at.replace(tzinfo=timezone.utc)
         else:
@@ -82,6 +100,8 @@ async def get_user_balance(
         days_left = max(0, (expires_aware - now).days)
 
     is_active = status == "active" and days_left > 0
+
+    # Запрос реального трафика из Hiddify Manager
     traffic_data = await _get_hiddify_traffic(user["hiddify_uuid"]) or {
         "used_gb": 0.0, "total_gb": 0.0, "remaining_gb": 0.0, "percent": 0.0
     }
@@ -123,4 +143,4 @@ async def _get_hiddify_traffic(hiddify_uuid: str) -> dict | None:
 
 def _make_subscription_link(hiddify_uuid: str) -> str:
     domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-    return f"https://{domain}/subscription/{hiddify_uuid}/#Ulysses"
+    return "https://" + domain + "/subscription/" + str(hiddify_uuid)+"#Ulysses"

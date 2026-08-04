@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api/bot", tags=["bot"])
 class BotRegisterSchema(BaseModel):
     tg_user_id: int = Field(..., description="Уникальный Telegram ID пользователя")
     tg_username: str = Field(..., description="Юзернейм пользователя без символа @")
+    hiddify_uuid: Optional[str] = None
 
 class BotActionSchema(BaseModel):
     tg_user_id: int = Field(..., description="Telegram ID инициатора действия")
@@ -127,7 +128,6 @@ async def get_bot_state(
         "keyboard": "renew"
     }
 
-
 @router.post("/register")
 async def bot_register_user(
     payload: BotRegisterSchema,
@@ -135,19 +135,52 @@ async def bot_register_user(
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Мягкая регистрация пользователя.
-    Гарантированно создает запись с валидным UUID паспорта, исключая появление пустышек в БД.
+    Регистрация пользователя в боте с поддержкой глубокого связывания (Deep Linking).
+    Приоритет 1: Если передан UUID, связываем ТГ-аккаунт с сайтовым профилем.
     """
+    clean_username = payload.tg_username.lstrip("@").strip()
+
+    # 1. Сначала проверяем, передал ли бот UUID из ссылки в письме
+    if hasattr(payload, "hiddify_uuid") and payload.hiddify_uuid:
+        clean_uuid = str(payload.hiddify_uuid).strip().lower()
+
+        # Ищем в БД сайтовую запись по UUID, у которой еще нет привязанного Telegram ID
+        check_uuid_res = await db.execute(
+            text("SELECT id FROM users WHERE hiddify_uuid = :uuid AND tg_user_id IS NULL"),
+            {"uuid": clean_uuid}
+        )
+        existing_profile = check_uuid_res.fetchone()
+
+        if existing_profile:
+            db_id = existing_profile[0]
+
+            # Привязываем ваш Telegram ID прямо в эту сайтовую запись
+            await db.execute(
+                text("""
+                    UPDATE users
+                    SET tg_user_id = :tg_id, tg_username = :username, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :db_id
+                """),
+                {
+                    "tg_id": payload.tg_user_id,
+                    "username": clean_username,
+                    "db_id": db_id
+                }
+            )
+            await db.commit()
+            logger.info(f"🔗 [УСПЕХ] Профили соединены! Telegram {payload.tg_user_id} связан с сайтовой записью ID {db_id}")
+            return {"status": "linked", "created": False}
+
+    # 2. Стандартный сценарий (обычный старт бота в поиске без реферального UUID)
     res = await db.execute(
         text("SELECT id FROM users WHERE tg_user_id = :tg_id"),
         {"tg_id": payload.tg_user_id}
     )
 
     if not res.fetchone():
-        # ИСПРАВЛЕНО: Генерация UUID на этапе /register предотвращает каскадные сбои в HFM
+        # Если пользователя вообще нет – создаем автономный ТГ-профиль
         new_hiddify_uuid = str(uuid.uuid4())
         default_email = f"tg_{payload.tg_user_id}@ulysses.internal"
-        clean_username = payload.tg_username.lstrip("@").strip()
 
         await db.execute(
             text("""
@@ -162,7 +195,7 @@ async def bot_register_user(
             }
         )
         await db.commit()
-        logger.info(f"👤 Зарегистрирован новый пользователь бота: {payload.tg_user_id} с паспортом UUID: {new_hiddify_uuid}")
+        logger.info(f"👤 Создан новый автономный пользователь бота: {payload.tg_user_id} с UUID: {new_hiddify_uuid}")
         return {"status": "registered", "created": True}
 
     return {"status": "exists", "created": False}

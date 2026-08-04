@@ -12,7 +12,7 @@ async def set_bot_commands(bot: Bot):
     commands_en = [
         BotCommand(command="start", description="Main menu and status"),
         BotCommand(command="lang", description="Change interface language"),
-        BotCommand(command="balance", description="Check subscription & traffic balance"),
+        BotCommand(command="info", description="Check subscription & traffic balance"),
         BotCommand(command="support", description="Contact tech support")
     ]
 
@@ -20,7 +20,7 @@ async def set_bot_commands(bot: Bot):
     commands_ru = [
         BotCommand(command="start", description="Главное меню и статус VPN"),
         BotCommand(command="lang", description="Изменить язык интерфейса"),
-        BotCommand(command="balance", description="Проверить баланс трафика"),
+        BotCommand(command="info", description="Проверить баланс трафика"),
         BotCommand(command="support", description="Связаться с техподдержкой")
     ]
 
