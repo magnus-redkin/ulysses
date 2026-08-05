@@ -1,4 +1,4 @@
-# ulysses-backend/cli/pay.py
+# cli/pay.py
 
 import asyncio
 import click
@@ -33,7 +33,7 @@ def pay_invoice(tg_id, tariff, currency, amount):
     async def _invoice():
         import json
         import os
-        from app.service.platega_service import PlategaPaymentService
+        from app.services.platega_service import PlategaPaymentService
 
         async with AsyncSessionLocal() as session:
             # 1. Находим пользователя

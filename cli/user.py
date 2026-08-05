@@ -12,9 +12,6 @@ from .db_utils import find_user_by_identifier
 import json
 from app.services.activation_manager import get_or_create_user
 from app.services.free_subscription import create_free_subscription
-from app.database import AsyncSessionLocal
-import uuid as uuid_lib
-
 
 console = Console()
 
@@ -51,14 +48,14 @@ async def user_create(tg_id, username):
         try:
             # 1. Проверяем, существует ли пользователь
             user = await get_or_create_user(session, tg_user_id=tg_id)
-            if user.get("user_id"):
-                console.print(f"[red]❌ Ошибка: Пользователь с TG ID {tg_id} уже существует в базе![/red]")
+            # 2. Проверяем, есть ли уже подписка (значит, пользователь существовал)
+            sub_check = await session.execute(
+                text("SELECT id FROM subscriptions WHERE user_id = :uid LIMIT 1"),
+                {"uid": user["user_id"]}
+            )
+            if sub_check.fetchone():
+                console.print(f"[red]❌ Пользователь с TG ID {tg_id} уже существует и имеет подписку![/red]")
                 return
-
-            # 2. Создаём нового пользователя (get_or_create_user это сделает)
-            # Но мы хотим явно контролировать процесс, поэтому передаём email=None
-            user = await get_or_create_user(session, tg_user_id=tg_id, email=None)
-            # Если пользователь уже был, get_or_create_user вернул бы его, но мы проверили выше.
 
             # 3. Активируем бесплатный тариф
             result = await create_free_subscription(session, user)
@@ -386,18 +383,3 @@ async def user_subscription_status(identifier):
 
         console.print(table)
         console.print("")
-
-async def _resolve_uuid(session, identifier: str) -> str | None:
-    from sqlalchemy import text
-    # Попробуем интерпретировать как UUID
-    query = text("""
-        SELECT hiddify_uuid FROM users
-        WHERE hiddify_uuid = :val
-           OR email = :val
-           OR tg_user_id::text = :val
-           OR id::text = :val
-        LIMIT 1
-    """)
-    res = await session.execute(query, {"val": identifier.strip()})
-    row = res.fetchone()
-    return row[0] if row else None

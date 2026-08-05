@@ -1,14 +1,14 @@
 # cli/__main__.py
 
 # ЦЕНТРАЛЬНЫЙ ДИСПЕТЧЕР И ТОЧКА ВХОДА CLI ИНСТРУМЕНТАРИЯ UADMIN
-# Модуль собирает и регистрирует все изолированные пакеты команд (user, db, fix, check, brain).
+# Модуль собирает и регистрирует все изолированные пакеты команд (user, db, fix, check).
 # Жестко фиксирует глобальный контекст утилиты под нативное системное имя "uadmin",
 # автоматически каскадируя правильные строки "Usage:" вниз по всему дереву подкоманд.
 
 import click
 import logging
-from . import stats, notify, check, system_info, db, user, sub
-from .brain import brain
+from . import stats, notify, check, system_info, db, user
+# from .brain import brain
 from .pay import pay as pay_group
 from .monitor import monitor as monitor_group
 from .fix import fix as fix_group
@@ -41,14 +41,14 @@ cli.add_command(check.check)
 cli.add_command(system_info.system_info, name="system")
 cli.add_command(db.db)
 cli.add_command(user.user)
-cli.add_command(sub.sub)
+# cli.add_command(sub.sub)
 # cli.add_command(vpn.vpn)
 cli.add_command(monitor_group)
 cli.add_command(notify_cmd)
 cli.add_command(fix_group)
 
 cli.add_command(pay_group)
-cli.add_command(brain)
+# cli.add_command(brain)
 
 
 @cli.command(name="help")

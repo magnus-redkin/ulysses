@@ -181,7 +181,7 @@ async def _check_summary(verbose: bool, sync: bool = False):
                         a.get("subscription_status", "—"),
                         a.get("details", "—")
                     )
-                    console.print(an_table)
+                console.print(an_table)
 
             total = dirty_invoices + failed_provisioning + mismatches + hiddify_anomalies
             if total == 0:

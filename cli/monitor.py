@@ -21,9 +21,6 @@ from aiohttp import web
 
 from cli.notify import send_admin_alert
 
-console = ...  # если нужно, импортируем Console из rich
-# Но для демона можно обойтись print или logging
-
 # Настройки
 HFM_HOST = os.getenv("HFM_HOST", "45.131.215.185")
 HFM_SCRIPT = "~/monitor.sh"
