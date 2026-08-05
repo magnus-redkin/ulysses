@@ -7,10 +7,11 @@
 
 import click
 import logging
-from . import stats, notify, check, fix, system_info, db, user, sub
+from . import stats, notify, check, system_info, db, user, sub
 from .brain import brain
 from .pay import pay as pay_group
 from .monitor import monitor as monitor_group
+from .fix import fix as fix_group
 
 from cli.notify import notify as notify_cmd
 
@@ -36,7 +37,7 @@ def cli():
 # Регистрируем изолированные модули подкоманд в единое дерево
 cli.add_command(stats.stats)
 cli.add_command(check.check)
-cli.add_command(fix.fix)
+
 cli.add_command(system_info.system_info, name="system")
 cli.add_command(db.db)
 cli.add_command(user.user)
@@ -44,6 +45,7 @@ cli.add_command(sub.sub)
 # cli.add_command(vpn.vpn)
 cli.add_command(monitor_group)
 cli.add_command(notify_cmd)
+cli.add_command(fix_group)
 
 cli.add_command(pay_group)
 cli.add_command(brain)

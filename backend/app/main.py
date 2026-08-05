@@ -22,6 +22,7 @@ from app.routers.billing import router as billing_router
 # from app.routers.admin import router as admin_router
 # from app.routers.test_billing import router as test_billing_router
 from app.routers.sub_render import router as sub_render_router
+from app.routers import admin
 
 # Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
 @asynccontextmanager
@@ -64,8 +65,9 @@ app.add_middleware(
 app.include_router(bot_router)
 app.include_router(user_router)
 app.include_router(billing_router)
-# app.include_router(admin_router)
+
 app.include_router(sub_render_router)
+app.include_router(admin.router)
 
 @app.get("/health")
 async def health_check():

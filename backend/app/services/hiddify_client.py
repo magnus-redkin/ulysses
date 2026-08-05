@@ -1,3 +1,5 @@
+# app/services/hiddify_client.py
+
 import logging
 import httpx
 import asyncio # <-- Добавлено для фонового планирования

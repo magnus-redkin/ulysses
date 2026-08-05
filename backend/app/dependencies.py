@@ -1,3 +1,5 @@
+# app/dependencies.py
+
 import secrets  # <-- ДОБАВЛЕНО для защиты от атак по времени
 from fastapi import Header, HTTPException
 from app.config import settings
