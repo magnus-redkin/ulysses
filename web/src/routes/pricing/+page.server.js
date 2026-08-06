@@ -1,6 +1,6 @@
 import { fail, redirect, isRedirect } from '@sveltejs/kit';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = process.env.BACKEND_API_URL || 'http://localhost:8000';
 
 /** @type {import('./$types').PageServerLoad} */
 export const load = async ({ fetch }) => {
@@ -55,7 +55,7 @@ export const actions = {
       }
 
         const result = await response.json();
-        console.log('CREATE INVOICE RESPONSE:', JSON.stringify(result, null, 2));
+        // console.log('CREATE INVOICE RESPONSE:', JSON.stringify(result, null, 2));
 
       // Если статус подразумевает успешное создание подписки
       if (result.status === 'free_tariff' || result.status === 'success') {
@@ -64,13 +64,6 @@ export const actions = {
           success: true,
           message: 'Check your email for the subscription link' // или локализованная строка
         };
-
-        // Перенаправляем на персональную страницу
-        // let uuid = result.hiddify_uuid;
-        // if (!uuid) {
-        //   return fail(500, { error: 'No account identifier returned from backend' });
-        // }
-        // throw redirect(302, `/account/${uuid}`);
       }
 
       // Если ошибка – возвращаем форму с ошибкой

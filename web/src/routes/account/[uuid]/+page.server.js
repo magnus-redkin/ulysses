@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 const API_KEY = env.HOST_API_KEY;
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = process.env.BACKEND_API_URL || 'http://localhost:8000';
 
 export async function load({ params, fetch }) {
   const uuid = params.uuid;

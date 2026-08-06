@@ -1,5 +1,8 @@
+// web/src/routes/api/tickets/+server.js
+
 import { json } from '@sveltejs/kit';
 import PouchDB from 'pouchdb';
+import { verifyApiKey } from '$lib/server/auth';
 
 const db = new PouchDB('.db_tickets');
 
@@ -45,6 +48,13 @@ export async function GET({ cookies }) {
 // 2. ПРИЕМ НОВЫХ СООБЩЕНИЙ ОТ TELEGRAM-БОТА (POST)
 // ============================================================
 export async function POST({ request }) {
+  if (!verifyApiKey(request)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
     try {
         const data = await request.json();
         const { tg_user_id, username, text } = data;
@@ -53,7 +63,7 @@ export async function POST({ request }) {
             return new Response(JSON.stringify({ error: 'Missing fields' }), {
                 status: 400,
                 headers: { 'Content-Type': 'application/json' }
-            });
+            });bo
         }
 
         // Проверяем, есть ли открытый тикет у этого пользователя

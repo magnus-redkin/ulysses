@@ -1,4 +1,5 @@
 <script>
+  // web/src/routes/admin/components/Sidebar.svelte
     import { browser } from '$app/environment';
     import Modal from './Modal.svelte';
 
@@ -37,7 +38,7 @@
         userInfo = null;
 
         try {
-            const res = await fetch(`/api/user/balance?tg_user_id=${tg_user_id}`);
+          const res = await fetch(`/admin/api/user/balance?tg_user_id=${tg_user_id}`);
             if (res.ok) {
                 userInfo = await res.json();
             } else if (res.status === 404) {

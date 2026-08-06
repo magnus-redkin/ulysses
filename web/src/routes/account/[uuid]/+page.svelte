@@ -1,5 +1,5 @@
 <script>
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { locale } from '$lib/locale.svelte.js';
 
   let { data } = $props();

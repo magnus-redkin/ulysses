@@ -25,7 +25,7 @@
         currentUserInfo = null;
         isLoadingUserInfo = true;
         try {
-            const res = await fetch(`/api/user/balance?tg_user_id=${ticket.tg_user_id}`);
+          const res = await fetch(`/admin/api/user/balance?tg_user_id=${ticket.tg_user_id}`);
             if (res.ok) {
                 currentUserInfo = await res.json();
             } else if (res.status === 404) {

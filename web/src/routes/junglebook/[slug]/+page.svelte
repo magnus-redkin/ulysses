@@ -40,10 +40,11 @@
   let currentSlug = $derived(page.params.slug || 'index');
 
   // 3. Динамически вычисляем компонент на основе slug
-  let CurrentContent = $derived(() => {
-    const path = `/src/lib/junglebook/ru/${currentSlug}.md`;
-    return ruChapters[path]?.default || null;
-  });
+  // let CurrentContent = $derived(() => {
+  //   const path = `/src/lib/junglebook/ru/${currentSlug}.md`;
+  //   return ruChapters[path]?.default || null;
+  // });
+  let CurrentContent = $derived(ruChapters[`/src/lib/junglebook/ru/${currentSlug}.md`]?.default || null);
 </script>
 
 <div class="py-10 grid grid-cols-1 md:grid-cols-12 gap-8">
@@ -72,7 +73,6 @@
   <!-- Основной текст главы -->
   <main class="md:col-span-8 prose prose-invert max-w-none">
     {#if CurrentContent()}
-      {@const ContentComponent = CurrentContent()}
       <ContentComponent />
     {:else}
       <div class="p-4 bg-rose-950/40 border border-rose-800 text-rose-300 font-mono rounded">

@@ -8,7 +8,7 @@
   import HeaderEN from '$lib/content/en/header.md';
 
 
-  import { getContext } from 'svelte';
+  // import { getContext } from 'svelte';
 
 
   let { children, data } = $props();

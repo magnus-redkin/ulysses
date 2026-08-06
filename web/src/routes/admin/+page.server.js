@@ -1,5 +1,7 @@
+// web/src/routes/admin/+page.server.js
+
 import { fail, redirect } from '@sveltejs/kit'; // Убедитесь, что импортирован redirect
-import { authenticate, isValidSession } from '$lib/server/auth';
+import { authenticate, isValidSession, destroySession } from '$lib/server/auth';
 import PouchDB from 'pouchdb';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -36,33 +38,35 @@ export async function load({ cookies }) {
 }
 
 export const actions = {
-    login: async ({ request, cookies }) => {
-        const data = await request.formData();
-        const password = data.get('password');
+  login: async ({ request, cookies }) => {
+    const data = await request.formData();
+    const password = data.get('password');
+    const sessionToken = authenticate(password);
 
-        const sessionToken = authenticate(password);
+    if (!sessionToken) {
+      return fail(400, { incorrect: true, message: 'Неверный пароль администратора' });
+    }
 
-        if (!sessionToken) {
-            return fail(400, { incorrect: true, message: 'Неверный пароль администратора' });
-        }
+    cookies.set('session', sessionToken, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 60 * 60 * 24 // 24 часа (синхронизировано с TTL сессии)
+    });
 
-        // Устанавливаем надежную куку на 30 дней
-        cookies.set('session', sessionToken, {
-            path: '/',
-            httpOnly: true,
-            sameSite: 'strict',
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 30
-        });
+    throw redirect(303, '/admin');
+  },
 
-        // МАКСИМАЛЬНО ЖЕСТКИЙ СЕРВЕРНЫЙ РЕДИРЕКТ НА СЕБЯ
-        throw redirect(303, '/admin');
-    },
-
-    logout: ({ cookies }) => {
-        cookies.delete('session', { path: '/' });
-        throw redirect(303, '/admin');
-    },
+  logout: ({ cookies, request }) => {
+    // Получаем текущий токен из куки
+    const token = cookies.get('session');
+    if (token) {
+      destroySession(token);
+    }
+    cookies.delete('session', { path: '/' });
+    throw redirect(303, '/admin');
+  },
 
   executeCommand: async ({ request, fetch }) => {
       const data = await request.formData();

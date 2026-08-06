@@ -43,7 +43,7 @@ p {
 
 /* Глобальный стиль для ссылок */
 a {
-  color: #7dd3fc important;       /* Sky 300 — мягкий голубой */
+  color: #7dd3fc !important;       /* Sky 300 — мягкий голубой */
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease, text-decoration 0.2s ease;

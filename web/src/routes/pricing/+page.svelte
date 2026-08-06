@@ -1,7 +1,7 @@
 <script>
   import { enhance } from '$app/forms';
   import { locale } from '$lib/locale.svelte.js';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
 
   let { form } = $props();
 

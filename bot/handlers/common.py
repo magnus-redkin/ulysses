@@ -206,11 +206,17 @@ async def handle_text_tickets(message: Message):
     logger.info(f"📝 Sending tech support ticket from: {message.from_user.id}")
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(f"{WEB_API_URL}/api/tickets", json={
-                "tg_user_id": message.from_user.id,
-                "username": message.from_user.username or "unknown",
-                "text": message.text
-            })
+            headers = {"X-API-Key": HOST_API_KEY}
+            resp = await client.post(
+                f"{WEB_API_URL}/api/tickets",
+                json={
+                    "tg_user_id": message.from_user.id,
+                    "username": message.from_user.username or "unknown",
+                    "text": message.text
+                },
+                headers=headers
+            )
+
             if resp.status_code == 200:
                 data = resp.json()
                 success_msg = LOCALIZATION[lang]["ticket_success"].format(num=data.get('ticket_number', ''))

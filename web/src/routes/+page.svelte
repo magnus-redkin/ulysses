@@ -1,6 +1,6 @@
 <script>
   import { locale } from '$lib/locale.svelte.js';
-  import { page } from '$app/stores';
+  // import { page } from '$app/state';
   import SocialLinks from './SocialLinks.svelte';
 
 </script>
@@ -9,7 +9,7 @@
 <svelte:head>
   {#if locale.current === 'ru'}
     <title>Улисс VPN — Умный VPN с открытым исходным кодом</title>
-    <meta name="description" content="Улисс VPN — умный VPN с открытым исходным кодом на базе Hiddify. Надежная защита VLESS, REALITY, gRPC и xHTTP без слежки и CloudFlare." />
+    <meta name="description" content="Улисс VPN — умный VPN с открытым исходным кодом на базе Hiddify. Надежная защита VLESS, REALITY, и xHTTP без слежки и CloudFlare." />
     <meta name="keywords" content="vpn с открытым исходным кодом, умный vpn, hiddify vpn, vless reality vpn, бесплатный впн, ulysses vpn" />
 
     <!-- Open Graph (Для красивого отображения ссылки в Telegram/VK) -->
@@ -17,7 +17,7 @@
     <meta property="og:description" content="умный VPN на базе Hiddify с открытым исходным кодом. Защита VLESS + REALITY." />
   {:else}
     <title>Ulysses VPN — Smart Open-Source VPN</title>
-    <meta name="description" content="Ulysses VPN is a smart, open-source VPN powered by Hiddify. Secure VLESS, REALITY, gRPC, and xHTTP protocols without corporate spying." />
+    <meta name="description" content="Ulysses VPN is a smart, open-source VPN powered by Hiddify. Secure VLESS, REALITY, and xHTTP protocols without corporate spying." />
     <meta name="keywords" content="open source vpn, smart vpn, hiddify vpn, vless reality, free vpn, ulysses vpn" />
 
     <!-- Open Graph for English -->
@@ -41,7 +41,7 @@
       <SocialLinks />
 
       <p class="text-lg opacity-80 mt-4">
-        VLESS + REALITY + gRPC + xHTTP
+        VLESS + Reality + xHTTP
       </p>
 
       <ul class="list-disc list-inside space-y-1 mt-2 opacity-80">
