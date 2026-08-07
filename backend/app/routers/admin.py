@@ -105,8 +105,6 @@ async def fix_cleanup_invoices(db: AsyncSession = Depends(get_db)):
     logger.info(f"Очистка инвойсов: удалено {deleted} записей")
     return {"status": "cleaned", "deleted_count": deleted}
 
-from app.services.admin_service import get_stats  # в начало файла
-
 @router.get("/stats")
 async def admin_get_stats(
     verbose: bool = Query(False, description="Показать детализацию зависших подписок"),

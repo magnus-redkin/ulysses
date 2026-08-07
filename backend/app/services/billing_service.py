@@ -10,8 +10,9 @@ from app.models import PaymentAttempt
 from app.services.activation_manager import get_or_create_user, get_or_create_subscription, get_tariffs
 from app.services.free_subscription import create_free_subscription
 from app.platega.platega_service import PlategaPaymentService
-
 from app.services.email_service import email_service
+
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +85,10 @@ async def create_invoice_logic(
         }
 
 
-    # 5. Платный тариф – создаём инвойс и ссылку на оплату
+        # 5. Платный тариф – создаём инвойс и ссылку на оплату
     if sub_check["status"] == "requires_payment":
         logger.info(f"💳 Создание инвойса для user_id={user['user_id']}, тариф={tariff_slug}, сумма={amount} {currency}")
 
-        from decimal import Decimal
         amount_decimal = Decimal(str(tariff_config["price"]))
 
         new_attempt = PaymentAttempt(
@@ -102,21 +102,27 @@ async def create_invoice_logic(
         db.add(new_attempt)
         await db.commit()
 
-        # 🌟 2. ИСПРАВЛЕНО: Передаем currency и method в SDK Platega!
-        pay_service = PlategaPaymentService()
-        invoice_data = await pay_service.create_invoice_link(
-            amount=amount,
-            attempt_id=str(new_attempt.id),
-            tariff_name=tariff_slug,
-            currency=currency,
-            user_telegram_id=tg_user_id
-        )
-        logger.info(f"Platega response (динамический шлюз): {invoice_data}")
+        # Вызов Platega — если упадёт, пометим инвойс failed и не оставим pending
+        try:
+            pay_service = PlategaPaymentService()
+            invoice_data = await pay_service.create_invoice_link(
+                amount=amount,
+                attempt_id=str(new_attempt.id),
+                tariff_name=tariff_slug,
+                currency=currency,
+                user_telegram_id=tg_user_id
+            )
+            logger.info(f"Platega response (динамический шлюз): {invoice_data}")
 
-        if invoice_data and "url" in invoice_data:
+            if not invoice_data or "url" not in invoice_data:
+                raise RuntimeError("Platega returned no URL")
+
             payment_url = invoice_data["url"]
-        else:
-            logger.error(f"❌ Platega не вернул ссылку для {new_attempt.id}")
+
+        except Exception as e:
+            logger.error(f"❌ Platega error for {new_attempt.id}: {e}")
+            new_attempt.status = "failed"
+            await db.commit()
             raise RuntimeError("Platega unavailable")
 
         return {

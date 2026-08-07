@@ -172,10 +172,22 @@ async def test_deep_link_binding():
     print("✅ test_deep_link_binding PASSED")
 
 
+async def cleanup():
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    async with AsyncSessionLocal() as session:
+        for tg_id in [TEST_TG_ID_BASE + 1, TEST_TG_ID_BASE + 2, TEST_TG_ID_BASE + 100]:
+            await session.execute(text("DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE tg_user_id = :id)"), {"id": tg_id})
+            await session.execute(text("DELETE FROM payment_attempts WHERE user_id IN (SELECT id FROM users WHERE tg_user_id = :id)"), {"id": tg_id})
+            await session.execute(text("DELETE FROM users WHERE tg_user_id = :id"), {"id": tg_id})
+        await session.commit()
+
 async def main():
     await test_no_duplicate_users()
     await test_deep_link_binding()
-
+    await cleanup()
+    print("🧹 Очистка завершена")
 
 if __name__ == "__main__":
     asyncio.run(main())

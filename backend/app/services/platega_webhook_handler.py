@@ -142,9 +142,11 @@ async def _activate_subscription(session, order_id: uuid.UUID, user_id: int, tar
     status_str = "active" if hiddify_success else "provisioning"
 
     # Фиксируем результаты в СУБД одной короткой транзакцией
+
+    provider_tx_id = data.get("id") or data.get("transactionId", "webhook")
     await session.execute(
-        text("UPDATE payment_attempts SET status = 'success', provider_tx_id = :tx, updated_at = NOW() WHERE id = :id"),
-        {"tx": "webhook", "id": order_id}
+            text("UPDATE payment_attempts SET status = 'success', provider_tx_id = :tx, updated_at = NOW() WHERE id = :id"),
+    {"tx": provider_tx_id, "id": order_id}
     )
 
     if sub_row:
@@ -164,7 +166,7 @@ async def _activate_subscription(session, order_id: uuid.UUID, user_id: int, tar
 
     await session.commit()
 
-    # Блок отправки пушей (без изменений)
+    # Блок отправки пушей
     domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
     sub_link = f"https://{domain}/subscription/{hiddify_uuid_str}/#Ulysses"
 

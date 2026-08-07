@@ -72,7 +72,7 @@ async def test_failed_provisioning_saves_subscription():
 
             if provisioning_failed:
                 assert sub is not None, "❌ Подписка не найдена в БД (возможно, откатилась вместе с транзакцией)"
-                assert sub[0] == "failed", f"❌ Статус подписки должен быть 'failed', а не '{sub[0]}'"
+                assert sub[0] == "provisioning_failed", f"❌ Статус подписки должен быть 'provisioning_failed', а не '{sub[0]}'"
                 print(f"  БД: статус={sub[0]}, ошибка={sub[1][:50] if sub[1] else 'нет'}")
                 print("✅ test_failed_provisioning_saves_subscription PASSED")
             else:

@@ -5,6 +5,9 @@ import httpx
 from typing import Dict, Any, Optional
 from app.config import settings
 
+import logging
+logger = logging.getLogger(__name__)
+
 class PlategaPaymentService:
     """Провайдер Platega – прямой HTTP без SDK, создаёт универсальную ссылку."""
 
@@ -58,8 +61,8 @@ class PlategaPaymentService:
                 if resp.status_code == 200:
                     return resp.json()
                 else:
-                    print(f"❌ [PLATEGA] HTTP {resp.status_code}: {resp.text}")
+                    logger.error(f"❌ [PLATEGA] HTTP {resp.status_code}: {resp.text}")
                     return None
         except Exception as e:
-            print(f"❌ [PLATEGA SERVICE] Ошибка при запросе к API: {e}")
+            logger.error(f"❌ [PLATEGA SERVICE] Ошибка при запросе к API: {e}")
             return None

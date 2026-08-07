@@ -20,11 +20,8 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
     Возвращает сводку аномалий и, при verbose=True, детальные списки.
     """
     # Устаревшие инвойсы (старше 48 часов — можно вынести в параметр)
-    hours = settings.INVOICE_DIRTY_HOURS
-    sql_interval = f"NOW() - INTERVAL '{hours} hours'"
-
     dirty = await db.execute(
-        text(f"SELECT COUNT(*) FROM payment_attempts WHERE status = 'pending' AND created_at < {sql_interval}")
+            text("SELECT COUNT(*) FROM payment_attempts WHERE status IN ('pending', 'processing') AND created_at < NOW() - make_interval(hours := :hours)"), {"hours": settings.INVOICE_DIRTY_HOURS}
     )
 
     dirty_count = dirty.scalar()
@@ -53,12 +50,14 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
     if verbose:
         if dirty_count > 0:
             inv_sql = """
-                SELECT id, email, tariff_slug, amount, created_at
-                FROM payment_attempts
-                WHERE status = 'pending' AND created_at < NOW() - INTERVAL '{hours} hours'
-                ORDER BY created_at DESC
+            SELECT id, email, tariff_slug, amount, created_at
+            FROM payment_attempts
+            WHERE status = 'pending' AND created_at < NOW() - make_interval(hours := :hours)
+            ORDER BY created_at DESC
             """
-            inv_res = await db.execute(text(inv_sql))
+            inv_res = await db.execute(text(inv_sql), {"hours": settings.INVOICE_DIRTY_HOURS})
+
+
             inv_rows = inv_res.fetchall()
             result["dirty_invoices"] = [
                 {
@@ -96,14 +95,12 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
 
     return result
 
-
 async def cleanup_invoices(db: AsyncSession) -> int:
-    """Удалить pending инвойсы старше 24 часов, вернуть количество удалённых."""
-    hours = settings.INVOICE_DIRTY_HOURS
+    """Удалить pending и зависшие processing инвойсы старше N часов."""
     res = await db.execute(
-        text(f"DELETE FROM payment_attempts WHERE status = 'pending' AND created_at < NOW() - INTERVAL '{hours} hours'")
+        text("DELETE FROM payment_attempts WHERE status IN ('pending', 'processing') AND created_at < NOW() - make_interval(hours := :hours)"),
+        {"hours": settings.INVOICE_DIRTY_HOURS}
     )
-    # await db.commit()
     return res.rowcount
 
 async def get_stats(db: AsyncSession, verbose: bool = False) -> dict:

@@ -60,7 +60,7 @@ async def create_free_subscription(
             logger.info(f"✅ [FREE SUB] sub_free успешно активирован для {email or user_id}")
         else:
             await db.execute(
-                text("UPDATE subscriptions SET status = 'failed', provisioning_error = 'HFM API error', updated_at = NOW() WHERE id = :sub_id"),
+                text("UPDATE subscriptions SET status = 'provisioning_failed', provisioning_error = 'HFM API error', updated_at = NOW() WHERE id = :sub_id"),
                 {"sub_id": sub_id}
             )
             await db.commit()
@@ -70,7 +70,7 @@ async def create_free_subscription(
         logger.error(f"❌ Фатальная ошибка интеграции Hiddify: {e}")
         try:
             await db.execute(
-                text("UPDATE subscriptions SET status = 'failed', provisioning_error = :err, updated_at = NOW() WHERE id = :sub_id"),
+                text("UPDATE subscriptions SET status = 'provisioning_failed', provisioning_error = :err, updated_at = NOW() WHERE id = :sub_id"),
                 {"sub_id": sub_id, "err": str(e)[:200]}
             )
             await db.commit()

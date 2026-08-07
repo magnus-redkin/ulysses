@@ -30,9 +30,26 @@ async def test_with_auth_works():
     assert resp.status_code not in (401, 403), f"Got {resp.status_code}: {resp.text}"
     print(f"✅ test_with_auth_works PASSED (status {resp.status_code})")
 
+
+async def cleanup():
+    """Удалить тестового пользователя tg_id=123."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE tg_user_id = 123)"))
+        await session.execute(text("DELETE FROM payment_attempts WHERE user_id IN (SELECT id FROM users WHERE tg_user_id = 123)"))
+        await session.execute(text("DELETE FROM users WHERE tg_user_id = 123"))
+        await session.commit()
+
 async def main():
     await test_no_auth_returns_401()
     await test_with_auth_works()
+    await cleanup()
+    print("🧹 Очистка завершена")
 
 if __name__ == "__main__":
     asyncio.run(main())

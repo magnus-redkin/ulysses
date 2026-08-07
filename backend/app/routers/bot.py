@@ -109,12 +109,6 @@ async def get_bot_state(
             "message": get_message("welcome_active"),
             "keyboard": "active"
         }
-    if is_active and days_left == 0:
-        return {
-            "state": "expiring_today",
-            "message": get_message("welcome_expiring_today"),
-            "keyboard": "renew"
-        }
     if is_active and days_left <= 5:
         return {
             "state": "expiring",
@@ -257,9 +251,6 @@ async def bot_action(
                 tariff_slug=tariff_slug,
                 currency=selected_currency
             )
-
-            # Если дошли сюда без исключений, значит операция прошла успешно — коммитим
-            await db.commit()
 
             if result.get("status") == "free_tariff":
                 message = get_message(
