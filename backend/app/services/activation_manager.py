@@ -26,8 +26,8 @@ async def get_or_create_user(
     if not email and not tg_user_id:
         raise ValueError("Необходимо указать email или tg_user_id")
 
+    # 1. Сначала ищем существующего пользователя по tg_user_id или email
     row = None
-    # 1. Ищем по tg_user_id
     if tg_user_id:
         res = await db.execute(
             text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE tg_user_id = :tg_id"),
@@ -35,7 +35,6 @@ async def get_or_create_user(
         )
         row = res.fetchone()
 
-    # 2. Ищем по email (если по tg_id не нашли)
     if not row and email:
         res = await db.execute(
             text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE email = :email"),
@@ -43,7 +42,7 @@ async def get_or_create_user(
         )
         row = res.fetchone()
 
-    # ИСПРАВЛЕНО: Если пользователь есть, но у него БИТЫЙ/ПУСТОЙ UUID (как у нашего голубчика)
+    # Если нашли — проверяем/исправляем UUID
     if row:
         user_id, hiddify_uuid, current_email, current_tg_id = row
 
@@ -54,7 +53,7 @@ async def get_or_create_user(
                 text("UPDATE users SET hiddify_uuid = :uuid, updated_at = NOW() WHERE id = :uid"),
                 {"uuid": new_uuid, "uid": user_id}
             )
-            await db.flush() # Синхронизируем изменения без закрытия транзакции
+            await db.flush()
             hiddify_uuid = new_uuid
 
         return {
@@ -64,55 +63,41 @@ async def get_or_create_user(
             "tg_user_id": current_tg_id
         }
 
-    # 3. Создаем абсолютно нового, если не нашли вообще (код остается прежним)
+    # 2. Пользователь не найден — создаём нового через UPSERT
     new_uuid = str(uuid_lib.uuid4())
     if not email and tg_user_id:
         email = f"tg_{tg_user_id}@ulysses.internal"
     elif not email:
         email = f"user_{new_uuid[:8]}@ulysses.internal"
 
-    try:
-        sql_user = """
-            INSERT INTO users (email, hiddify_uuid, tg_user_id, created_at, updated_at)
-            VALUES (:email, :uuid, :tg_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            RETURNING id
-        """
-        res_user = await db.execute(
-            text(sql_user),
-            {"email": email, "uuid": new_uuid, "tg_id": tg_user_id}
-        )
-        user_id = res_user.scalar_one()
-        # await db.commit()
-        await db.flush()
-        logger.info(f"👤 Создан новый пользователь: id={user_id}, uuid={new_uuid}")
-        return {
-            "user_id": user_id,
-            "hiddify_uuid": new_uuid,
-            "email": email,
-            "tg_user_id": tg_user_id
-        }
-    except IntegrityError:
-        await db.rollback()
-        # Email уже существует – находим существующего и обновляем tg_user_id
-        res = await db.execute(
-            text("SELECT id, hiddify_uuid, email, tg_user_id FROM users WHERE email = :email"),
-            {"email": email}
-        )
-        row = res.fetchone()
-        if not row:
-            raise RuntimeError(f"Unexpected IntegrityError for {email}")
-        if tg_user_id and not row[3]:
-            await db.execute(
-                text("UPDATE users SET tg_user_id = :tg_id, updated_at = CURRENT_TIMESTAMP WHERE id = :uid"),
-                {"tg_id": tg_user_id, "uid": row[0]}
-            )
-            await db.commit()
-        return {
-            "user_id": row[0],
-            "hiddify_uuid": row[1],
-            "email": email,
-            "tg_user_id": tg_user_id or row[3]
-        }
+    # Атомарный upsert: если за время поиска другой поток уже вставил такой email,
+    # мы обновим tg_user_id и получим существующую запись без ошибки IntegrityError.
+    sql_upsert = """
+        INSERT INTO users (email, hiddify_uuid, tg_user_id, created_at, updated_at)
+        VALUES (:email, :uuid, :tg_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (email) DO UPDATE
+            SET tg_user_id = COALESCE(users.tg_user_id, EXCLUDED.tg_user_id),
+                updated_at = CASE
+                    WHEN users.tg_user_id IS NULL AND EXCLUDED.tg_user_id IS NOT NULL
+                    THEN CURRENT_TIMESTAMP
+                    ELSE users.updated_at
+                END
+        RETURNING id, hiddify_uuid, email, tg_user_id
+    """
+    res = await db.execute(
+        text(sql_upsert),
+        {"email": email, "uuid": new_uuid, "tg_id": tg_user_id}
+    )
+    user_id, hiddify_uuid, current_email, current_tg_id = res.fetchone()
+
+    logger.info(f"👤 Пользователь upsert: id={user_id}, uuid={hiddify_uuid}")
+    return {
+        "user_id": user_id,
+        "hiddify_uuid": hiddify_uuid,
+        "email": current_email,
+        "tg_user_id": current_tg_id
+    }
+
 
 async def get_or_create_subscription(
     db: AsyncSession,

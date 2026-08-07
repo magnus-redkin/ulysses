@@ -2,21 +2,20 @@
 """
 Тест 01: Создание пользователя через email (сайт)
 """
-
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import tests.set_env
-
+from app.config import settings
 
 import asyncio
 import httpx
 import uuid
-from datetime import datetime
 
 BASE_URL = "http://127.0.0.1:8000"
+API_KEY = "3mu6zk42E2E9v7zFoLViXbcCY4FVAYQc"
 TEST_EMAIL = f"test_{uuid.uuid4().hex[:8]}@example.com"
+
 
 async def test_create_user_email():
     """Тест создания пользователя через сайт (email)"""
@@ -26,19 +25,16 @@ async def test_create_user_email():
     print("=" * 60)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-
-        # 0. Очистка перед тестом
-        print(f"\n🧹 Шаг 0: Очистка перед тестом...")
-        await client.delete(f"{BASE_URL}/api/admin/account", params={"email": TEST_EMAIL})
-        await asyncio.sleep(0.3)
+        headers = {"X-API-Key": API_KEY}
 
         # 1. Создаем инвойс
         print(f"\n📝 Шаг 1: Создаем инвойс для {TEST_EMAIL}...")
         response = await client.post(
             f"{BASE_URL}/api/billing/create-invoice",
+            headers=headers,
             json={
                 "email": TEST_EMAIL,
-                "tariff_slug": "premium"
+                "tariff_slug": "sub_3m"
             }
         )
 
@@ -56,21 +52,29 @@ async def test_create_user_email():
         print("\n💰 Шаг 2: Симулируем оплату (вебхук)...")
         webhook_response = await client.post(
             f"{BASE_URL}/api/billing/webhook",
+            headers={
+                "X-MerchantId": settings.PLATEGA_MERCHANT_ID,
+                "X-Secret": settings.PLATEGA_API
+            },
             json={
-                "order_id": order_id,
-                "provider_tx_id": f"tx_test_{uuid.uuid4()}",
-                "status": "success"
+                "id": f"tx_test_{uuid.uuid4().hex[:8]}",
+                "amount": 499.0,
+                "currency": "RUB",
+                "status": "CONFIRMED",
+                "paymentMethod": 10,
+                "payload": order_id
             }
         )
+
+        print(f"  Вебхук статус: {webhook_response.status_code}")
+        print(f"  Вебхук тело: {webhook_response.text}")
 
         if webhook_response.status_code != 200:
             print(f"❌ Ошибка вебхука: {webhook_response.status_code}")
             print(f"   Ответ: {webhook_response.text}")
             return False
 
-        webhook_data = webhook_response.json()
-        print(f"✅ Вебхук выполнен: {webhook_data.get('status')}")
-        print(f"   • UUID: {webhook_data.get('hiddify_uuid')}")
+        print(f"✅ Вебхук выполнен: {webhook_response.text}")
 
         # 3. Ждем завершения фоновых задач
         await asyncio.sleep(2)
@@ -79,6 +83,7 @@ async def test_create_user_email():
         print("\n📊 Шаг 3: Проверяем создание пользователя...")
         balance_response = await client.get(
             f"{BASE_URL}/api/user/balance",
+            headers=headers,
             params={"email": TEST_EMAIL}
         )
 
@@ -89,25 +94,40 @@ async def test_create_user_email():
         user_data = balance_response.json()
         print(f"✅ Пользователь найден:")
         print(f"   • Email: {user_data.get('email')}")
-        print(f"   • UUID: {user_data.get('uuid')}")
+        print(f"   • UUID: {user_data.get('hiddify_uuid')}")
         print(f"   • Статус: {'Активен' if user_data.get('is_active') else 'Неактивен'}")
         print(f"   • Дней осталось: {user_data.get('days_left')}")
 
-        # 5. Проверяем, что письмо отправлено (проверяем по логам)
-        print("\n📧 Шаг 4: Проверяем отправку письма...")
-        print("   ✅ Письмо должно быть отправлено на email (проверьте логи)")
-        print(f"   📧 {TEST_EMAIL}")
+        hiddify_uuid = user_data.get('hiddify_uuid')
 
+        # 5. Очистка через БД и Hiddify
+        print(f"\n🧹 Шаг 4: Очистка...")
+        from app.database import AsyncSessionLocal
+        from app.services.hiddify_client import HiddifyProvisioner
+        from sqlalchemy import text
 
-        # 6. Очистка
-        print(f"\n🧹 Шаг 5: Очистка...")
-        # Удалить из БД
-        await client.delete(f"{BASE_URL}/api/admin/account", params={"email": TEST_EMAIL, "target": "db"})
-        # Удалить из Hiddify
-        hiddify_uuid = user_data.get('uuid')
+        # Удаляем из Hiddify
         if hiddify_uuid:
-            await client.delete(f"{BASE_URL}/api/admin/account", params={"uuid": hiddify_uuid, "target": "hiddify"})
-        print(f"   ✅ Пользователь удалён")
+            provisioner = HiddifyProvisioner()
+            await provisioner.delete_user(hiddify_uuid)
+            print(f"   ✅ Удалён из Hiddify: {hiddify_uuid}")
+
+        # Удаляем из БД
+        async with AsyncSessionLocal() as session:
+            try:
+                await session.execute(
+                    text("DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE email = :email)"),
+                    {"email": TEST_EMAIL}
+                )
+                await session.execute(
+                    text("DELETE FROM users WHERE email = :email"),
+                    {"email": TEST_EMAIL}
+                )
+                await session.commit()
+                print(f"   ✅ Удалён из БД: {TEST_EMAIL}")
+            except Exception as e:
+                await session.rollback()
+                print(f"   ⚠️ Ошибка очистки БД: {e}")
 
         return True
 
@@ -121,6 +141,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import sys
-    # Если main() вернул True -> exit(0), если False -> exit(1)
     sys.exit(0 if asyncio.run(main()) else 1)

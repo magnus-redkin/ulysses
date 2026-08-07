@@ -5,6 +5,8 @@
 import asyncio
 import sys
 from pathlib import Path
+import httpx
+
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -25,15 +27,23 @@ async def test_user_info():
 
     # 1. Создаем пользователя через email
     print(f"\n📝 Шаг 1: Создаем пользователя через email...")
-    result = await create_user_email(TEST_EMAIL, "monthly")
+    result = await create_user_email(TEST_EMAIL, "sub_1m")
+    print(f"   Результат создания: {result}")
     await asyncio.sleep(2)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"http://127.0.0.1:8000/api/user/balance",
+            headers={"X-API-Key": "3mu6zk42E2E9v7zFoLViXbcCY4FVAYQc"},
+            params={"email": TEST_EMAIL}
+        )
+        print(f"   Сырой ответ: {resp.status_code} {resp.text}")
     print(f"   ✅ Создан: {TEST_EMAIL}")
 
     # 2. Поиск по email
     print(f"\n🔍 Шаг 2: Поиск по email...")
     balance = await get_user_balance(TEST_EMAIL, by="email")
     assert balance, "Не найден по email"
-    uuid_user = balance.get('uuid')
+    uuid_user = balance.get('hiddify_uuid')
     print(f"   ✅ Найден: {balance.get('email')} | UUID: {uuid_user[:12]}... | Дней: {balance.get('days_left')}")
 
     # 3. Поиск по UUID

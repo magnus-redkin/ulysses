@@ -10,17 +10,14 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tg_user_id = Column(BigInteger, nullable=True, index=True) # Источник истины (без уникальности БД)
+    tg_user_id = Column(BigInteger, nullable=True, index=True)
     tg_username = Column(String(255), nullable=True)
-    email = Column(String(255), unique=True, index=True, nullable=True) # Сделали NULLABLE
-
-    # Бессмертный UUID для Hiddify переехал сюда (генерируется один раз для пользователя)
+    email = Column(String(255), unique=True, index=True, nullable=True)
     hiddify_uuid = Column(UUID(as_uuid=True), unique=True, nullable=True, default=uuid.uuid4)
 
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    # Связи
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
     payment_attempts = relationship("PaymentAttempt", back_populates="user")
 
@@ -30,26 +27,19 @@ class Subscription(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    # Тариф
     tariff_slug = Column(String(50), nullable=False)
-
-    # Статусы: pending_payment, provisioning, active, provisioning_failed, expired, cancelled
     status = Column(String(50), default="pending_payment", index=True)
 
-    # Даты
-    starts_at = Column(DateTime, nullable=True)
-    expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    starts_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    # Provisioning поля
     provisioning_attempts = Column(Integer, default=0)
-    last_provisioning_at = Column(DateTime, nullable=True)
+    last_provisioning_at = Column(DateTime(timezone=True), nullable=True)
     provisioning_error = Column(Text, nullable=True)
-    activated_at = Column(DateTime, nullable=True)
+    activated_at = Column(DateTime(timezone=True), nullable=True)
 
-    # Связи
     user = relationship("User", back_populates="subscriptions")
 
     def to_dict(self):
@@ -74,18 +64,14 @@ class PaymentAttempt(Base):
     email = Column(String(255), index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    # Платеж
     tariff_slug = Column(String(50), nullable=False)
     amount = Column(Float, nullable=False)
     currency = Column(String(10), default="RUB")
 
-    # Статус платежа
     status = Column(String(50), default="pending", index=True)
     provider_tx_id = Column(String(255), nullable=True)
 
-    # Даты
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    # Связи
     user = relationship("User", back_populates="payment_attempts")

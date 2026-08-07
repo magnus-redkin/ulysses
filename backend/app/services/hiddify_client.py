@@ -19,14 +19,14 @@ class HiddifyProvisioner:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-        self.verify_ssl = False
+        # self.verify_ssl = False
 
     async def apply_config(self) -> bool:
         """Принудительно заставить HFM применить настройки ядра."""
         target_url = f"{self.admin_base_url}config/action/"
         logger.info(f"🔄 [HIDDIFY CLIENT] Применение конфигурации ядра... POST ➔ '{target_url}'")
         try:
-            async with httpx.AsyncClient(timeout=15.0, verify=self.verify_ssl) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(target_url, headers=self.headers, json={"action": "apply"})
                 if response.status_code in (200, 201):
                     logger.info("✅ [HIDDIFY CLIENT] Конфигурация ядра успешно применена нодой.")
@@ -51,7 +51,7 @@ class HiddifyProvisioner:
             "enable": True
         }
         try:
-            async with httpx.AsyncClient(timeout=15.0, verify=self.verify_ssl, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 response = await client.post(target_url, headers=self.headers, json=payload)
                 if response.status_code in (200, 201):
                     logger.info(f"✅ [HIDDIFY CLIENT] Профиль {name} успешно создан на ноде VPN.")
@@ -71,7 +71,7 @@ class HiddifyProvisioner:
         # ИСПРАВЛЕНО: Убран двойной слэш
         target_url = f"{self.base_url}/{str(uuid_str).strip().lower()}/"
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=self.verify_ssl, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.patch(target_url, headers=self.headers, json={"enable": True})
                 if response.status_code in (200, 204):
                     asyncio.create_task(self.apply_config()) # В фон
@@ -85,7 +85,7 @@ class HiddifyProvisioner:
         # ИСПРАВЛЕНО: Убран двойной слэш
         target_url = f"{self.base_url}/{str(uuid_str).strip().lower()}/"
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=self.verify_ssl, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.patch(target_url, headers=self.headers, json={"enable": False})
                 if response.status_code in (200, 204):
                     asyncio.create_task(self.apply_config()) # В фон
@@ -105,7 +105,7 @@ class HiddifyProvisioner:
         logger.info(f"🗑️ [HIDDIFY CLIENT] DELETE ➔ {target_url}")
 
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=self.verify_ssl) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.delete(target_url, headers=self.headers)
 
                 if response.status_code in (200, 204):
@@ -136,7 +136,7 @@ class HiddifyProvisioner:
         target_url = f"{self.base_url}/{clean_uuid}/"
 
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=self.verify_ssl, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.get(target_url, headers=self.headers)
 
                 # Если панель вернула 200 OK, пользователь существует

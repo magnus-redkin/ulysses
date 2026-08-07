@@ -1,3 +1,5 @@
+# backend/app/routers/admin.py
+
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query

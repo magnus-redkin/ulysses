@@ -5,12 +5,15 @@
 import asyncio
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # <-- сначала
+
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
 
-sys.path.insert(0, str(Path(__file__).parent))
-
+sys.path.insert(0, str(Path(__file__).parent))  # потом для lib
 from lib.test_helpers import create_user_tg, get_user_balance, get_bot_state, cleanup_user
+
 
 TEST_TG_ID = 666666666
 TEST_TG_USERNAME = "test_free"

@@ -52,23 +52,23 @@ async def get_tariffs_endpoint():
 @router.post("/create-invoice")
 async def create_invoice(
     payload: InvoiceCreate,
-    db: AsyncSession = Depends(get_db)
-    # api_key: str = Depends(verify_api_key)
+    db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key)
 ):
-    """Создание инвойса (требует X-API-Key)."""
     try:
-        result = await create_invoice_logic(
-            db,
-            email=payload.email,
-            tg_user_id=payload.tg_user_id,
-            tariff_slug=payload.tariff_slug,
-            currency=payload.currency
-        )
+        result = await create_invoice_logic(db, email=payload.email, tg_user_id=payload.tg_user_id, tariff_slug=payload.tariff_slug, currency=payload.currency)
+        await db.commit()
         return result
     except ValueError as e:
+        await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        await db.rollback()
+        raise
+
 
 @router.post("/webhook")
 async def payment_webhook(request: Request):

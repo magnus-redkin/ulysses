@@ -1,3 +1,5 @@
+# backend/app/services/sub_render.py
+
 """
 Сервис генерации подписного конфига SingBox / Hiddify.
 Чистая бизнес-логика, параметры Reality/XHTTP берутся из переменных окружения.

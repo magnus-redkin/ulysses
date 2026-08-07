@@ -1,3 +1,5 @@
+# backend/app/services/user_service.py
+
 """
 Сервис для работы с пользователями: баланс, трафик, профиль.
 """
@@ -121,25 +123,35 @@ async def get_user_balance(
     }
 
 async def _get_hiddify_traffic(hiddify_uuid: str) -> dict | None:
-    """Запрос к HFM API для получения трафика пользователя."""
+    """Запрос к HFM API для получения трафика ОДНОГО пользователя."""
     headers = {"Hiddify-API-Key": settings.HIDDIFY_API_KEY}
+    clean_uuid = str(hiddify_uuid).strip().lower()
+
+    # Точечный запрос вместо загрузки всего списка
+    url = f"{settings.HIDDIFY_API_URL.rstrip('/')}/api/v2/admin/user/{clean_uuid}/"
+
     try:
-        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-            response = await client.get(settings.HIDDIFY_API_URL, headers=headers)
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(url, headers=headers)
             if response.status_code == 200:
-                for u in response.json():
-                    if str(u.get("uuid", "")).lower() == str(hiddify_uuid).lower():
-                        usage = float(u.get("current_usage_GB", 0))
-                        total = float(u.get("usage_limit_GB", 0))
-                        return {
-                            "used_gb": round(usage, 2),
-                            "total_gb": round(total, 2),
-                            "remaining_gb": round(max(0.0, total - usage), 2),
-                            "percent": round((usage / total * 100) if total > 0 else 0, 1)
-                        }
+                u = response.json()
+                usage = float(u.get("current_usage_GB", 0))
+                total = float(u.get("usage_limit_GB", 0))
+                return {
+                    "used_gb": round(usage, 2),
+                    "total_gb": round(total, 2),
+                    "remaining_gb": round(max(0.0, total - usage), 2),
+                    "percent": round((usage / total * 100) if total > 0 else 0, 1)
+                }
+            elif response.status_code == 404:
+                logger.debug(f"Пользователь {clean_uuid} не найден в Hiddify")
+                return None
+            else:
+                logger.error(f"❌ Hiddify API Error for uuid {clean_uuid}: HTTP {response.status_code}")
+                return None
     except Exception as e:
-        logger.error(f"❌ Hiddify API Error for uuid {hiddify_uuid}: {e}")
-    return None
+        logger.error(f"❌ Hiddify API Error for uuid {clean_uuid}: {e}")
+        return None
 
 def _make_subscription_link(hiddify_uuid: str) -> str:
     domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"

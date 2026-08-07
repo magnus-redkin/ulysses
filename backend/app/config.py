@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     HEALTHCHECK_PORT: int = int(os.getenv("HEALTHCHECK_PORT", "8081"))
     ADMIN_IDS: str = os.getenv("ADMIN_IDS", "")
 
+    INVOICE_DIRTY_HOURS: int = int(os.getenv("INVOICE_DIRTY_HOURS", "24"))
+
     ENOT_SHOP_ID: str = os.getenv("ENOT_SHOP_ID", "")
     ENOT_SECRET_KEY: str = os.getenv("ENOT_SECRET_KEY", "")
     ENOT_HOOK_KEY: str = os.getenv("ENOT_HOOK_KEY", "")

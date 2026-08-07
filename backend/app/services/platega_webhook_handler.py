@@ -176,10 +176,11 @@ async def _activate_subscription(session, order_id: uuid.UUID, user_id: int, tar
         except Exception as e:
             logger.error(f"❌ [ACTIVATE] Failed to send TG message: {e}")
 
+
     if email and "@" in email and not email.endswith("@ulysses.internal"):
         try:
-            from app.email_service import email_service as mail_svc
-            subject, html_body, text_body = mail_svc.get_welcome_email(email, hiddify_uuid_str)
-            await mail_svc.send_email(email, subject, html_body, text_body)
+            from app.services.email_service import email_service
+            subject, html_body, text_body = email_service.get_welcome_email(email, hiddify_uuid_str)
+            await email_service.send_email(email, subject, html_body, text_body)
         except Exception as e:
             logger.error(f"❌ [ACTIVATE] Failed to send email: {e}")

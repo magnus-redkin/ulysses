@@ -30,9 +30,9 @@ class EmailService:
         logger.info(f"📧 Email сервис: {self.smtp_user}@{self.smtp_host}:{self.smtp_port}")
 
         # SSL контекст
-        self.ssl_context = ssl.create_default_context()
-        self.ssl_context.check_hostname = False
-        self.ssl_context.verify_mode = ssl.CERT_NONE
+        # self.ssl_context = ssl.create_default_context()
+        # self.ssl_context.check_hostname = False
+        # self.ssl_context.verify_mode = ssl.CERT_NONE
 
     async def send_email(
         self,
@@ -69,7 +69,7 @@ class EmailService:
                         port=port,
                         use_tls=(port == 465),
                         start_tls=(port != 465),
-                        tls_context=self.ssl_context,
+                        # tls_context=self.ssl_context,
                         timeout=15.0,
                         local_hostname="mail.ulysses.best",
                         source_address=("0.0.0.0", 0)  # Жесткая изоляция сокета на IPv4

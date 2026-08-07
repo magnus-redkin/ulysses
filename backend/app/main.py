@@ -36,19 +36,11 @@ app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0", lifespan=lifespa
 
 @app.middleware("http")
 async def log_all_requests(request: Request, call_next):
-    logger.info(f"🔥 INCOMING: {request.method} {request.url} from {request.client.host}")
+    # Логируем только в dev-окружении или если явно включено
+    if settings.ENVIRONMENT == "development" or getattr(settings, "LOG_REQUESTS", False):
+        logger.info(f"🔥 INCOMING: {request.method} {request.url} from {request.client.host}")
     response = await call_next(request)
     return response
-
-
-# Настройки CORS для работы фронтенда
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
 
 app.add_middleware(
     CORSMiddleware,

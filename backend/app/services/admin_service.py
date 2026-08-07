@@ -1,3 +1,5 @@
+# backend/app/services/admin_service.py
+
 """
 Сервисный слой административной диагностики и обслуживания.
 Чистая бизнес-логика, не зависит от HTTP.
@@ -9,17 +11,22 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.hiddify_client import HiddifyProvisioner
 
-logger = logging.getLogger(__name__)
+from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
     """
     Возвращает сводку аномалий и, при verbose=True, детальные списки.
     """
     # Устаревшие инвойсы (старше 48 часов — можно вынести в параметр)
+    hours = settings.INVOICE_DIRTY_HOURS
+    sql_interval = f"NOW() - INTERVAL '{hours} hours'"
+
     dirty = await db.execute(
-        text("SELECT COUNT(*) FROM payment_attempts WHERE status = 'pending' AND created_at < NOW() - INTERVAL '2 days'")
+        text(f"SELECT COUNT(*) FROM payment_attempts WHERE status = 'pending' AND created_at < {sql_interval}")
     )
+
     dirty_count = dirty.scalar()
 
     # Зависшие активации
@@ -48,7 +55,7 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
             inv_sql = """
                 SELECT id, email, tariff_slug, amount, created_at
                 FROM payment_attempts
-                WHERE status = 'pending' AND created_at < NOW() - INTERVAL '2 days'
+                WHERE status = 'pending' AND created_at < NOW() - INTERVAL '{hours} hours'
                 ORDER BY created_at DESC
             """
             inv_res = await db.execute(text(inv_sql))
@@ -92,10 +99,11 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
 
 async def cleanup_invoices(db: AsyncSession) -> int:
     """Удалить pending инвойсы старше 24 часов, вернуть количество удалённых."""
+    hours = settings.INVOICE_DIRTY_HOURS
     res = await db.execute(
-        text("DELETE FROM payment_attempts WHERE status = 'pending' AND created_at < NOW() - INTERVAL '24 hours'")
+        text(f"DELETE FROM payment_attempts WHERE status = 'pending' AND created_at < NOW() - INTERVAL '{hours} hours'")
     )
-    await db.commit()
+    # await db.commit()
     return res.rowcount
 
 async def get_stats(db: AsyncSession, verbose: bool = False) -> dict:
@@ -160,65 +168,54 @@ async def process_pending_provisioning(db: AsyncSession, limit: int = 50) -> int
         """),
         {"limit": limit}
     )
-    await db.commit()
+    # await db.commit()
     return len(result.fetchall())
-
-async def check_hiddify_sync(db: AsyncSession) -> dict:
+async def check_hiddify_sync(db: AsyncSession, limit: int = 1000) -> dict:
     """
     Сравнивает статусы пользователей в БД и на Hiddify.
-    Возвращает словарь с ключами:
-        - status_mismatches: список расхождений активен/неактивен
-        - anomalies: список критических аномалий (профиль отсутствует и т.п.)
+    Проверяет только существование профилей (missing_in_hiddify).
     """
     provisioner = HiddifyProvisioner()
     mismatches = []
     anomalies = []
 
-    # Выбираем пользователей, у которых есть UUID и хоть одна подписка (любая)
+    # Выбираем пользователей с UUID, без JOIN — каждый пользователь один раз
     sql = text("""
-        SELECT u.id, u.email, u.tg_user_id, u.hiddify_uuid,
-               s.status as sub_status
+        SELECT DISTINCT u.id, u.email, u.tg_user_id, u.hiddify_uuid
         FROM users u
-        LEFT JOIN subscriptions s ON s.user_id = u.id
         WHERE u.hiddify_uuid IS NOT NULL
         ORDER BY u.id
+        LIMIT :limit
     """)
-    result = await db.execute(sql)
+    result = await db.execute(sql, {"limit": limit})
     rows = result.fetchall()
 
     logger.info(f"🔄 Начинаем сверку {len(rows)} пользователей с Hiddify...")
 
     for r in rows:
-        u_id, email, tg_id, uuid, sub_status = r
-        uuid_str = str(uuid)
+        u_id, email, tg_id, uuid_val = r
+        uuid_str = str(uuid_val)
         contact = email or f"TG:{tg_id}" or f"ID:{u_id}"
 
         try:
             exists = await provisioner.check_user_exists(uuid_str)
         except Exception as e:
             logger.warning(f"Ошибка проверки {uuid_str}: {e}")
-            # Можно добавить в anomalies как "API error"
+            anomalies.append({
+                "type": "api_error",
+                "email": contact,
+                "uuid": uuid_str,
+                "details": f"Ошибка API при проверке: {str(e)[:200]}"
+            })
             continue
 
-        # Логика сравнения
         if not exists:
-            # Профиль отсутствует в Hiddify, но в БД есть UUID
             anomalies.append({
                 "type": "missing_in_hiddify",
                 "email": contact,
                 "uuid": uuid_str,
-                "details": f"Пользователь {contact} есть в биллинге, но профиль отсутствует на Hiddify.",
-                "subscription_status": sub_status or "no_subscription"
+                "details": f"Пользователь {contact} есть в биллинге, но профиль отсутствует на Hiddify."
             })
-        else:
-            # Здесь можно было бы получить детали профиля (enabled/disabled),
-            # но check_user_exists возвращает только bool.
-            # Для более детальной сверки нужен метод get_user_info.
-            # Пока мы можем только фиксировать факт существования.
-            # Предположим, что если подписка active, а профиль существует — ОК.
-            # Если подписка не active (expired/cancelled), а профиль существует — аномалия?
-            # Пока оставим только missing_in_hiddify.
-            pass
 
     logger.info(f"✅ Сверка завершена. Расхождений: {len(mismatches)}, аномалий: {len(anomalies)}")
     return {

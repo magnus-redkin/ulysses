@@ -127,7 +127,6 @@ async def get_bot_state(
         "message": get_message("welcome_expired"),
         "keyboard": "renew"
     }
-
 @router.post("/register")
 async def bot_register_user(
     payload: BotRegisterSchema,
@@ -140,65 +139,71 @@ async def bot_register_user(
     """
     clean_username = payload.tg_username.lstrip("@").strip()
 
-    # 1. Сначала проверяем, передал ли бот UUID из ссылки в письме
-    if hasattr(payload, "hiddify_uuid") and payload.hiddify_uuid:
-        clean_uuid = str(payload.hiddify_uuid).strip().lower()
+    try:
+        # 1. Сначала проверяем, передан ли UUID из ссылки в письме
+        if hasattr(payload, "hiddify_uuid") and payload.hiddify_uuid:
+            clean_uuid = str(payload.hiddify_uuid).strip().lower()
 
-        # Ищем в БД сайтовую запись по UUID, у которой еще нет привязанного Telegram ID
-        check_uuid_res = await db.execute(
-            text("SELECT id FROM users WHERE hiddify_uuid = :uuid AND tg_user_id IS NULL"),
-            {"uuid": clean_uuid}
+            check_uuid_res = await db.execute(
+                text("SELECT id FROM users WHERE hiddify_uuid = :uuid AND tg_user_id IS NULL"),
+                {"uuid": clean_uuid}
+            )
+            existing_profile = check_uuid_res.fetchone()
+
+            if existing_profile:
+                db_id = existing_profile[0]
+
+                await db.execute(
+                    text("""
+                        UPDATE users
+                        SET tg_user_id = :tg_id, tg_username = :username, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :db_id
+                    """),
+                    {
+                        "tg_id": payload.tg_user_id,
+                        "username": clean_username,
+                        "db_id": db_id
+                    }
+                )
+                await db.commit()
+                logger.info(f"🔗 [УСПЕХ] Профили соединены! Telegram {payload.tg_user_id} связан с сайтовой записью ID {db_id}")
+                return {"status": "linked", "created": False}
+
+        # 2. Стандартный сценарий (обычный старт бота в поиске без реферального UUID)
+        res = await db.execute(
+            text("SELECT id FROM users WHERE tg_user_id = :tg_id"),
+            {"tg_id": payload.tg_user_id}
         )
-        existing_profile = check_uuid_res.fetchone()
 
-        if existing_profile:
-            db_id = existing_profile[0]
+        if not res.fetchone():
+            # Если пользователя вообще нет – создаем автономный ТГ-профиль
+            new_hiddify_uuid = str(uuid.uuid4())
+            default_email = f"tg_{payload.tg_user_id}@ulysses.internal"
 
-            # Привязываем ваш Telegram ID прямо в эту сайтовую запись
             await db.execute(
                 text("""
-                    UPDATE users
-                    SET tg_user_id = :tg_id, tg_username = :username, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = :db_id
+                    INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, email, created_at, updated_at)
+                    VALUES (:tg_id, :username, :uuid, :email, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
                 {
                     "tg_id": payload.tg_user_id,
                     "username": clean_username,
-                    "db_id": db_id
+                    "uuid": new_hiddify_uuid,
+                    "email": default_email
                 }
             )
             await db.commit()
-            logger.info(f"🔗 [УСПЕХ] Профили соединены! Telegram {payload.tg_user_id} связан с сайтовой записью ID {db_id}")
-            return {"status": "linked", "created": False}
+            logger.info(f"👤 Создан новый автономный пользователь бота: {payload.tg_user_id} с UUID: {new_hiddify_uuid}")
+            return {"status": "registered", "created": True}
 
-    # 2. Стандартный сценарий (обычный старт бота в поиске без реферального UUID)
-    res = await db.execute(
-        text("SELECT id FROM users WHERE tg_user_id = :tg_id"),
-        {"tg_id": payload.tg_user_id}
-    )
+        # Пользователь уже существует
+        await db.commit()  # коммит для подтверждения прочитанных данных (не обязательно, но для единообразия)
+        return {"status": "exists", "created": False}
 
-    if not res.fetchone():
-        # Если пользователя вообще нет – создаем автономный ТГ-профиль
-        new_hiddify_uuid = str(uuid.uuid4())
-        default_email = f"tg_{payload.tg_user_id}@ulysses.internal"
-
-        await db.execute(
-            text("""
-                INSERT INTO users (tg_user_id, tg_username, hiddify_uuid, email, created_at, updated_at)
-                VALUES (:tg_id, :username, :uuid, :email, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """),
-            {
-                "tg_id": payload.tg_user_id,
-                "username": clean_username,
-                "uuid": new_hiddify_uuid,
-                "email": default_email
-            }
-        )
-        await db.commit()
-        logger.info(f"👤 Создан новый автономный пользователь бота: {payload.tg_user_id} с UUID: {new_hiddify_uuid}")
-        return {"status": "registered", "created": True}
-
-    return {"status": "exists", "created": False}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ Ошибка в /register: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/action")
@@ -213,44 +218,38 @@ async def bot_action(
     action = payload.action
     data = payload.payload or {}
 
-    # --- Сценарий покупки / Продления тарифа ---
-    if action == "buy_tariff":
-        tariff_slug = data.get("tariff_slug")
-        payment_type = data.get("payment_type") # rub, valuta, crypto
+    try:
+        # --- Сценарий покупки / Продления тарифа ---
+        if action == "buy_tariff":
+            tariff_slug = data.get("tariff_slug")
+            payment_type = data.get("payment_type")
 
-        # Если слаг тарифа отсутствует, отдаем структурированный список доступных планов
-        if not tariff_slug:
-            tariffs = get_tariffs()
-            return {
-                "state": "tariffs",
-                "message": get_message("welcome_new"),
-                "keyboard": "tariffs",
-                "tariffs": [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs.items()]
-            }
+            if not tariff_slug:
+                tariffs = get_tariffs()
+                await db.commit()  # read-only, но для единообразия
+                return {
+                    "state": "tariffs",
+                    "message": get_message("welcome_new"),
+                    "keyboard": "tariffs",
+                    "tariffs": [{"slug": k, "name_ru": v["name_ru"]} for k, v in tariffs.items()]
+                }
 
-        # Шаг А: Сценарий разводки платежных шлюзов (если способ оплаты еще не выбран)
-        if not payment_type:
-            return {
-                "state": "select_payment_type",
-                "message": "💳 <b>Выберите удобный способ оплаты:</b>\n\n<i>Для карт банков РФ и СБП выбирайте рубли. Для зарубежных карт или криптовалют — соответствующие шлюзы.</i>",
-                "keyboard": "inline",
-                "buttons": [
-                    {"text": "🇷🇺 Карты РФ / СБП (RUB)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "rub"}},
-                    {"text": "🇪🇺 Зарубежные карты (USD/EUR)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "valuta"}},
-                    {"text": "🪙 Криптовалюта (USDT/TON)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "crypto"}}
-                ]
-            }
+            if not payment_type:
+                await db.commit()
+                return {
+                    "state": "select_payment_type",
+                    "message": "💳 <b>Выберите удобный способ оплаты:</b>\n\n<i>Для карт банков РФ и СБП выбирайте рубли. Для зарубежных карт или криптовалют — соответствующие шлюзы.</i>",
+                    "keyboard": "inline",
+                    "buttons": [
+                        {"text": "🇷🇺 Карты РФ / СБП (RUB)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "rub"}},
+                        {"text": "🇪🇺 Зарубежные карты (USD/EUR)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "valuta"}},
+                        {"text": "🪙 Криптовалюта (USDT/TON)", "action": "buy_tariff", "payload": {"tariff_slug": tariff_slug, "payment_type": "crypto"}}
+                    ]
+                }
 
-        # Шаг Б: Преобразование пользовательского выбора в строковую валюту биллинга
-        currency_map = {
-            "rub": "RUB",
-            "valuta": "USD",
-            "crypto": "USDT"
-        }
-        selected_currency = currency_map.get(payment_type, "RUB")
+            currency_map = {"rub": "RUB", "valuta": "USD", "crypto": "USDT"}
+            selected_currency = currency_map.get(payment_type, "RUB")
 
-        # Прямой асинхронный вызов логики биллинга без паразитного HTTP-трафика на localhost
-        try:
             result = await create_invoice_logic(
                 db=db,
                 email=None,
@@ -258,86 +257,86 @@ async def bot_action(
                 tariff_slug=tariff_slug,
                 currency=selected_currency
             )
-        except Exception as e:
-            logger.error(f"❌ Критический сбой при вызове create_invoice_logic внутри роутера бота: {e}")
-            return {"state": "error", "message": get_message("error_api"), "keyboard": "back"}
 
-        # Шаг В: Обработка результатов расчета тарификации
+            # Если дошли сюда без исключений, значит операция прошла успешно — коммитим
+            await db.commit()
 
-        if result.get("status") == "free_tariff":
-            # Активирован бесплатный тариф (sub_free), выдаем готовую ссылку VPN
-            message = get_message(
-                "free_activated",
-                subscription_link=result["subscription_link"],
-                expires=result["expires_at"][:10] if result.get("expires_at") else ""
-            )
-            return {
-                "state": "info",
-                "message": message,
-                "keyboard": "back"
-            }
+            if result.get("status") == "free_tariff":
+                message = get_message(
+                    "free_activated",
+                    subscription_link=result["subscription_link"],
+                    expires=result["expires_at"][:10] if result.get("expires_at") else ""
+                )
+                return {
+                    "state": "info",
+                    "message": message,
+                    "keyboard": "back"
+                }
 
-        elif result.get("status") == "payment_required":
-            # Требуется оплата платного тарифа через один из шлюзов Platega
-            payment_url = result.get("payment_url")
-            amount = result.get("amount", 0)
-            currency_label = result.get("currency", "RUB")
-            order_id = result.get("order_id", "")
+            elif result.get("status") == "payment_required":
+                payment_url = result.get("payment_url")
+                amount = result.get("amount", 0)
+                currency_label = result.get("currency", "RUB")
+                order_id = result.get("order_id", "")
 
-            # Генерируем локализованный текст для пользователя в зависимости от валюты шлюза
-            if currency_label == "USDT":
-                gateway_desc = "🪙 Криптовалютный инвойс (USDT TRC-20)"
-            elif currency_label in ("USD", "EUR"):
-                gateway_desc = "🇪🇺 Форма оплаты международной картой (Visa/Mastercard)"
+                if currency_label == "USDT":
+                    gateway_desc = "🪙 Криптовалютный инвойс (USDT TRC-20)"
+                elif currency_label in ("USD", "EUR"):
+                    gateway_desc = "🇪🇺 Форма оплаты международной картой (Visa/Mastercard)"
+                else:
+                    gateway_desc = "🇷🇺 Система Быстрых Платежей (СБП) / Карта РФ"
+
+                message = get_message(
+                    "payment_pending",
+                    order_id=str(order_id),
+                    amount=f"{amount:.2f}",
+                    currency=currency_label
+                )
+                message += f"\n\n<b>Шлюз процессинга:</b> {gateway_desc}"
+
+                return {
+                    "state": "payment_pending",
+                    "message": message,
+                    "keyboard": "inline",
+                    "buttons": [
+                        {"text": "💳 Перейти к оплате", "url": payment_url},
+                        {"text": "⬅️ Назад в меню", "action": "buy_tariff", "payload": {}}
+                    ]
+                }
+
             else:
-                gateway_desc = "🇷🇺 Система Быстрых Платежей (СБП) / Карта РФ"
+                error_msg = result.get("message") or get_message("error_unknown")
+                return {
+                    "state": "error",
+                    "message": f"❌ {error_msg}",
+                    "keyboard": "back"
+                }
 
-            message = get_message(
-                "payment_pending",
-                order_id=str(order_id),
-                amount=f"{amount:.2f}",
-                currency=currency_label
-            )
+        # --- Просмотр баланса ---
+        elif action == "check_balance":
+            logger.info(f"📊 [БЭКЕНД] Запрос баланса для tg_user_id={tg_user_id}")
+            balance = await get_user_balance(db, tg_user_id=tg_user_id)
+            if not balance:
+                await db.rollback()
+                return {"state": "error", "message": get_message("error_api"), "keyboard": "back"}
 
-            # Дописываем к дефолтному сообщению тип выбранного шлюза для прозрачности интерфейса
-            message += f"\n\n<b>Шлюз процессинга:</b> {gateway_desc}"
-
+            await db.commit()
             return {
-                "state": "payment_pending",
-                "message": message,
-                "keyboard": "inline",
-                "buttons": [
-                    {"text": "💳 Перейти к оплате", "url": payment_url},
-                    {"text": "⬅️ Назад в меню", "action": "buy_tariff", "payload": {}}
-                ]
+                "state": "balance",
+                "balance": {
+                    "is_active": balance["is_active"],
+                    "email": balance["email"],
+                    "days_left": balance["days_left"],
+                    "traffic": balance["traffic"]
+                },
+                "keyboard": "back"
             }
 
         else:
-            # Неизвестный или ошибочный статус из недр биллинга
-            error_msg = result.get("message") or get_message("error_unknown")
-            return {
-                "state": "error",
-                "message": f"❌ {error_msg}",
-                "keyboard": "back"
-            }
+            await db.rollback()
+            return {"state": "error", "message": "Неизвестное действие", "keyboard": "back"}
 
-    # ============================================================
-    # 🌟 ПРОСМОТР БАЛАНСА И ТРАФИКА
-    # ============================================================
-
-    elif action == "check_balance":
-        logger.info(f"📊 [БЭКЕНД] Запрос баланса для tg_user_id={tg_user_id}")
-        balance = await get_user_balance(db, tg_user_id=tg_user_id)
-        if not balance:
-            return {"state": "error", "message": get_message("error_api"), "keyboard": "back"}
-
-        return {
-            "state": "balance",
-            "balance": {
-                "is_active": balance["is_active"],
-                "email": balance["email"],
-                "days_left": balance["days_left"],
-                "traffic": balance["traffic"]
-            },
-            "keyboard": "back"
-        }
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ Ошибка в bot_action: {e}")
+        return {"state": "error", "message": get_message("error_api"), "keyboard": "back"}

@@ -1,18 +1,13 @@
 # app/services/telegram_bot.py
 
-import os
 import logging
-from pathlib import Path
-from dotenv import load_dotenv
+import httpx
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-env_path = Path(__file__).parent.parent.parent / '.env'
-load_dotenv(env_path)
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-ADMIN_IDS = [int(x) for x in os.getenv("TG_ADMIN", "").split(",") if x.strip()]
+BOT_TOKEN = settings.BOT_TOKEN
+ADMIN_IDS = [int(x) for x in settings.ADMIN_IDS.split(",") if x.strip()] if settings.ADMIN_IDS else []
 
 async def send_telegram_message(tg_id: int, text: str) -> bool:
     """Отправить сообщение пользователю через Telegram Bot API."""
@@ -21,7 +16,6 @@ async def send_telegram_message(tg_id: int, text: str) -> bool:
         return False
 
     try:
-        import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -43,6 +37,9 @@ async def send_telegram_message(tg_id: int, text: str) -> bool:
 
 async def send_admin_alert(text: str) -> bool:
     """Отправить алерт всем админам."""
+    if not ADMIN_IDS:
+        logger.warning("ADMIN_IDS is empty, alert not sent")
+        return False
     results = []
     for admin_id in ADMIN_IDS:
         result = await send_telegram_message(tg_id=admin_id, text=f"🚨 {text}")
