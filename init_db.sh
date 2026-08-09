@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ulysses Lab VPN - Инициализация чистой БД (Только Ядро VPN и Биллинг)
+# Ulysses Lab VPN - Инициализация чистой БД (Ядро VPN, Биллинг, Gryphons)
 
 set -e
 
@@ -38,33 +38,37 @@ DROP TABLE IF EXISTS payment_attempts CASCADE;
 DROP TABLE IF EXISTS subscriptions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
+-- ============================================================
+-- ULYSSES: Пользователи, подписки, платежи
+-- ============================================================
+
 -- 1. ПОЛЬЗОВАТЕЛИ (Паспорт + КЛЮЧ VPN)
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
-    tg_user_id BIGINT,                        -- Наш главный источник истины
+    tg_user_id BIGINT,
     tg_username VARCHAR(100),
-    email VARCHAR(255) UNIQUE,                -- NULL разрешен для покупок из бота
-    hiddify_uuid UUID UNIQUE,                 -- Один ключ на всю жизнь
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    email VARCHAR(255) UNIQUE,
+    hiddify_uuid UUID UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. СРОКИ ПОДПИСОК (Только даты и тарифы)
+-- 2. ПОДПИСКИ
 CREATE TABLE subscriptions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tariff_slug VARCHAR(50) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'provisioning', -- provisioning, active, expired, cancelled
+    status VARCHAR(50) NOT NULL DEFAULT 'provisioning',
     node_id VARCHAR(50) DEFAULT 'main',
-    starts_at TIMESTAMP WITH TIME ZONE,
-    expires_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    starts_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     provisioning_attempts INTEGER DEFAULT 0,
-    last_provisioning_at TIMESTAMP WITH TIME ZONE,
+    last_provisioning_at TIMESTAMPTZ,
     provisioning_error TEXT,
-    activated_at TIMESTAMP WITH TIME ZONE
+    activated_at TIMESTAMPTZ
 );
 
 -- 3. ПЛАТЕЖНЫЕ ИНВОЙСЫ
@@ -75,10 +79,10 @@ CREATE TABLE payment_attempts (
     tariff_slug VARCHAR(50) NOT NULL,
     amount NUMERIC(10, 2) NOT NULL,
     currency VARCHAR(3) DEFAULT 'RUB',
-    status VARCHAR(20) DEFAULT 'pending', -- pending, success, failed
+    status VARCHAR(20) DEFAULT 'pending',
     provider_tx_id VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ТРИГГЕРЫ ОБНОВЛЕНИЯ ВРЕМЕНИ
@@ -93,7 +97,7 @@ END;
 CREATE TRIGGER tg_user_upd BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 CREATE TRIGGER tg_sub_upd BEFORE UPDATE ON subscriptions FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
--- ИНДЕКСЫ ДЛЯ ТАКУЩИХ СВЯЗЕЙ
+-- ИНДЕКСЫ ULYSSES
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_tg_user_id ON users(tg_user_id);
 CREATE INDEX IF NOT EXISTS idx_users_uuid ON users(hiddify_uuid);
@@ -101,83 +105,49 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payment_attempts(status);
 
--- BRAIN: Мозг VPN (щиты, телеметрия, инциденты, DNS)
-CREATE SCHEMA IF NOT EXISTS brain;
+-- ============================================================
+-- GRYPHONS: Все VPS (щиты, Ulysses, HFM)
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS brain.shields (
+DROP SCHEMA IF EXISTS gryphons CASCADE;
+CREATE SCHEMA gryphons;
+
+-- ВСЕ VPS в одной таблице
+CREATE TABLE gryphons.vps (
     id SERIAL PRIMARY KEY,
-    ip VARCHAR(45) NOT NULL,
-    country VARCHAR(10) NOT NULL,
-    datacenter VARCHAR(100),
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    last_health_check TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    host TEXT NOT NULL,                    -- имя/адрес VPS
+    provider TEXT NOT NULL,                -- 'aeza' | 'manual'
+    provider_id TEXT,                      -- ID сервера в API провайдера
+    country TEXT NOT NULL,                 -- 'FI' | 'SE' | 'RU'
+    internal_ip TEXT NOT NULL,             -- 10.x.x.x
+    active_ip TEXT NOT NULL,               -- текущий рабочий внешний IP
+    reserve_ip TEXT,                       -- резервный внешний IP (если есть)
+    is_gate BOOLEAN DEFAULT FALSE,         -- true = гейт Gryphons, false = Ulysses/HFM/инфра
+    role TEXT,                             -- 'gate' | 'ulysses' | 'hfm' | 'monitoring'
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS brain.telemetry (
+-- История переключений IP (только для гейтов, но ссылка на vps.id)
+CREATE TABLE gryphons.switches (
     id SERIAL PRIMARY KEY,
-    shield_id INTEGER NOT NULL REFERENCES brain.shields(id) ON DELETE CASCADE,
-    active_clients INTEGER DEFAULT 0,
-    error_count INTEGER DEFAULT 0,
-    avg_latency_ms NUMERIC(10, 2),
-    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    vps_id INT REFERENCES gryphons.vps(id),
+    old_ip TEXT NOT NULL,
+    new_ip TEXT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS brain.incidents (
-    id SERIAL PRIMARY KEY,
-    shield_id INTEGER NOT NULL REFERENCES brain.shields(id) ON DELETE CASCADE,
-    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP WITH TIME ZONE,
-    action_taken VARCHAR(50),
-    notification_sent BOOLEAN DEFAULT FALSE
-);
+CREATE TRIGGER tg_vps_upd
+    BEFORE UPDATE ON gryphons.vps
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
-CREATE TABLE IF NOT EXISTS brain.dns_state (
-    id SERIAL PRIMARY KEY,
-    domain VARCHAR(255) NOT NULL,
-    ip VARCHAR(45) NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_shields_status ON brain.shields(status);
-CREATE INDEX IF NOT EXISTS idx_telemetry_shield_time ON brain.telemetry(shield_id, recorded_at);
-CREATE INDEX IF NOT EXISTS idx_incidents_shield ON brain.incidents(shield_id);
-
-
-DO \$\$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'tg_shield_upd'
-    ) THEN
-        CREATE TRIGGER tg_shield_upd
-            BEFORE UPDATE ON brain.shields
-            FOR EACH ROW EXECUTE FUNCTION update_timestamp();
-    END IF;
-END \$\$;
-
-CREATE TABLE IF NOT EXISTS nodes (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(50) UNIQUE NOT NULL,
-    aeza_name VARCHAR(100) NOT NULL,
-    country VARCHAR(100) NOT NULL,
-    country_code CHAR(2) NOT NULL,
-    node_type VARCHAR(20) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS gateways (
-    id SERIAL PRIMARY KEY,
-    node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
-    ip_address VARCHAR(45) NOT NULL,
-    port INTEGER DEFAULT 443,
-    is_backup BOOLEAN DEFAULT FALSE,
-    status VARCHAR(20) DEFAULT 'active',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT unique_node_ip UNIQUE (node_id, ip_address)
-);
+CREATE INDEX IF NOT EXISTS idx_vps_status ON gryphons.vps(status);
+CREATE INDEX IF NOT EXISTS idx_vps_is_gate ON gryphons.vps(is_gate);
+CREATE INDEX IF NOT EXISTS idx_vps_country ON gryphons.vps(country);
+CREATE INDEX IF NOT EXISTS idx_switches_vps ON gryphons.switches(vps_id);
 
 EOF
 
-echo "=== Инициализация успешно завершена!  ==="
+echo "=== Инициализация успешно завершена! ==="
