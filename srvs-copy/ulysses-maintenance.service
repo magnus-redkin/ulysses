@@ -1,0 +1,15 @@
+[Unit]
+Description=Ulysses Daily Maintenance (dump + cleanup)
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=michael
+WorkingDirectory=/home/michael/Ulysses
+Environment="PYTHONPATH=/home/michael/Ulysses/backend"
+Environment="HOST_API_KEY=3mu6zk42E2E9v7zFoLViXbcCY4FVAYQc"
+
+# Шаг 1: Дамп БД
+ExecStart=/home/michael/Ulysses/.venv/bin/python -m cli db dump
+# Шаг 2: Очистка старых инвойсов через API
+ExecStart=/usr/bin/curl -X POST -H "X-API-Key: ${HOST_API_KEY}" http://127.0.0.1:8000/api/admin/fix/cleanup-invoices

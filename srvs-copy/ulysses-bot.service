@@ -1,0 +1,15 @@
+[Unit]
+Description=Ulysses VPN Telegram Bot
+After=network.target ulysses-backend.service
+
+[Service]
+Type=simple
+User=michael
+WorkingDirectory=/home/michael/Ulysses
+Environment="PYTHONPATH=."
+ExecStart=/home/michael/Ulysses/.venv/bin/python bot/main.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
