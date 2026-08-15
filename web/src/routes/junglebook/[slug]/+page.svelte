@@ -1,39 +1,46 @@
 <script>
+  // web/src/routes/junglebook/\[slug\]/+page.svelte
+
   import { page } from '$app/state';
 
   // 1. Сканируем файлы через Vite glob
-  const ruChapters = import.meta.glob('$lib/junglebook/ru/*.md', { eager: true });
+  // const ruChapters = import.meta.glob('$lib/junglebook/ru/*.md', { eager: true });
+  const ruChapters = import.meta.glob('/src/lib/junglebook/ru/*.md', { eager: true });
 
   // Список глав для бокового меню
     const chapters = [
       { slug: 'index', title: 'Содержание Книги' },
       // Глава 1
-      { slug: 'threats', title: 'Эволюция хищников', chapter: true },
-      { slug: 'local-threats', title: ' - локальные угрозы' },
-      { slug: 'global-threats', title: ' - глобальные угрозы' },
-      { slug: 'future-threats', title: ' - угрозы будущего' },
-      //
+      { title: 'Эволюция хищников', chapter: true },
+      { slug: 'threats', title: 'Классификация Угроз и Перспектив' },
+      { slug: 'local-threats', title: 'локальные угрозы' },
+      { slug: 'global-threats', title: 'глобальные угрозы' },
+      { slug: 'future-threats', title: 'угрозы будущего' },
 
-      { slug: 'how-to-choose-vpn', title: 'Как выбрать VPN?', chapter: true },
+      // Глава 2
+      { title: 'Как выбрать VPN?', chapter: true },
+      { slug: 'how-to-choose-vpn', title: 'Критерии устойчивости в эпоху жесткой цензуры' },
 
-      { slug: 'client', title: 'Настройки клиента Hiddify', chapter: true },
-    // Глава 2
-      { slug: 'hiddify', title: 'Экосистема Hiddify - универсальный комбайн', chapter: true },
-      { slug: 'hiddify-philosophy', title: ' - философия Hiddify' },
-      { slug: 'cores-architecture', title: ' - архитектура ядер' },
-      { slug: 'panel-comparison', title: ' - сравнение панелей' },
-    // Глава 3
-      { slug: 'protocols', title: 'Справочник протоколов', chapter: true },
-      { slug: 'vless-reality', title: ' - маскировка VLESS+Reality' },
-      { slug: 'quic-protocols', title: ' - скорость через QUIC' },
-      { slug: 'heavy-dpi-workarounds', title: ' - тяжелая артиллерия' },
-      { slug: 'legacy-protocols', title: ' - триада старой школы' },
-    // Глава 4
-      { slug: 'practice', title: 'Практика — протоколы в Hiddify-Manager', chapter: true },
-      { slug: 'regional-targeting', title: ' - карта по регионам' },
-      { slug: 'hf-reality-setup', title: ' - настройка Reality' },
-      { slug: 'cdn-transport-tuning', title: ' - оптимизация транспортов' },
-      { slug: 'doh-ech-tuning', title: ' - тюнинг DoH и ECH' }
+      // Глава 3
+      { title: 'Клиенты', chapter: true },
+      { slug: 'client', title: 'Настройки клиента Hiddify' },
+      { slug: 'v2rayN-Hiddify', title: 'v2rayN vs. Hiddify-Client vs. Happ' },
+
+      // Глава 4
+      { title: 'Справка по Протоколам и Транспортам', chapter: true },
+      { slug: 'classic-protocols', title: 'Прокси-Протоколы: VLESS, VMess, Trojan, Shadowsocks (версии AEAD и 2022), Протокол Mieru' },
+      { slug: 'udp-protocols', title: 'Udp-Ориентированные Высокоскоростные Протоколы: Hysteria2, TUIC, WireGuard' },
+      { slug: 'mask', title: 'Технологии Маскировки и Защиты Трафика: Reality, ShadowTLS' },
+      { slug: 'transports', title: 'Сетевые Транспорты И Обертки: TCP, WebSockets, gRPC, HTTPUpgrade, xHTTP' },
+      { slug: 'additional-services', title: 'Вспомогательные и Встроенные Сервисы: SSH Proxy, MTProto, DNS over HTTPS' },
+
+      // Глава 5
+      { title: 'Архитектура Hiddify', chapter: true },
+      { slug: 'xray-singbox', title: 'Xray vs. Singbox' },
+
+      { title: '', chapter: true },
+      { slug: 'links', title: 'полезные ссылки' },
+
   ];
 
   // 2. Получаем текущий slug (Svelte 5 Runes)
@@ -45,6 +52,7 @@
   //   return ruChapters[path]?.default || null;
   // });
   let CurrentContent = $derived(ruChapters[`/src/lib/junglebook/ru/${currentSlug}.md`]?.default || null);
+
 </script>
 
 <div class="py-10 grid grid-cols-1 md:grid-cols-12 gap-8">
@@ -56,7 +64,8 @@
         {#if ch.chapter}
           <!-- Заголовок главы: отбит сверху (mt-5), уменьшен, выделен цветом -->
           <div class="text-base font-bold uppercase_ tracking-wider text-slate-200 mt-5 mb-1 px-2">
-            <a href="/junglebook/{ch.slug}">{ch.title}</a>
+            <!-- <a href="/junglebook/{ch.slug}">{ch.title}</a> -->
+            {ch.title}
           </div>
 
         {:else}
@@ -72,8 +81,9 @@
 
   <!-- Основной текст главы -->
   <main class="md:col-span-8 prose prose-invert max-w-none">
-    {#if CurrentContent()}
-      <ContentComponent />
+    {#if CurrentContent}
+      <!-- <ContentComponent /> -->
+      <CurrentContent />
     {:else}
       <div class="p-4 bg-rose-950/40 border border-rose-800 text-rose-300 font-mono rounded">
         <h2 class="text-rose-400 font-bold mb-2">Глава не найдена</h2>
