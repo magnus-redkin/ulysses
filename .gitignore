@@ -23,6 +23,7 @@ venv/
 ENV/
 TMP/
 dump/
+docs/
 
 .db_tickets/
 

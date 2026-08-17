@@ -93,7 +93,7 @@ async def cmd_start(message: Message, command: CommandObject):
         # Мы передаем и tg_user_id, и hiddify_uuid, чтобы бэкенд объединил записи
         await api_call(
             "POST",
-            f"{BACKEND_API_URL}/api/bot/register", # ВНИМАНИЕ: уберите пробелы вокруг слэшей
+            f"{BACKEND_API_URL}/api/bot/register",
             api_key=HOST_API_KEY,
             json={
                 "tg_user_id": tg_user_id,
@@ -105,7 +105,7 @@ async def cmd_start(message: Message, command: CommandObject):
         logger.info(f"📥 [MENU START] Standard/start for user {tg_user_id}")
         await api_call(
             "POST",
-            f"{BACKEND_API_URL}/api/bot/register", # ВНИМАНИЕ: уберите пробелы вокруг слэшей
+            f"{BACKEND_API_URL}/api/bot/register",
             api_key=HOST_API_KEY,
             json={"tg_user_id": tg_user_id, "tg_username": tg_username}
         )

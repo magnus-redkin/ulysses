@@ -30,7 +30,7 @@ def test_admin_ids_from_settings():
 
 def test_telegram_bot_uses_settings():
     """telegram_bot.py должен использовать settings, а не загружать .env отдельно."""
-    from app.services.telegram_bot import BOT_TOKEN, ADMIN_IDS
+    from app.services.sender import BOT_TOKEN, ADMIN_IDS
 
     # BOT_TOKEN должен быть строкой (не None)
     assert isinstance(BOT_TOKEN, str), f"BOT_TOKEN должен быть str, а не {type(BOT_TOKEN)}"

@@ -14,7 +14,7 @@ from app.services.admin_service import (
     cleanup_invoices,
     get_stats,
     process_pending_provisioning,
-    check_hiddify_sync          # <-- добавить
+    check_hiddify_sync
 )
 
 

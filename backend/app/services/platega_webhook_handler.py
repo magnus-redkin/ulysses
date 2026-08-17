@@ -172,9 +172,9 @@ async def _activate_subscription(session, order_id: uuid.UUID, user_id: int, tar
 
     if tg_id:
         try:
-            from app.services.telegram_bot import send_telegram_message
+            from app.services.sender import send_telegram_message
             msg = f"💳 <b>Оплата получена!</b>\n\nПодписка продлена на <b>{days_to_add} дней</b>.\n📅 До: <code>{new_expires.strftime('%Y-%m-%d %H:%M')}</code> UTC.\n🔗 <a href='{sub_link}'>Ссылка для подключения</a>"
-            await send_telegram_message(tg_id=tg_id, text=msg)
+            await send_telegram_message(tg_id, msg)
         except Exception as e:
             logger.error(f"❌ [ACTIVATE] Failed to send TG message: {e}")
 

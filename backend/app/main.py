@@ -19,17 +19,25 @@ logger = logging.getLogger("uvicorn")
 from app.routers.bot import router as bot_router
 from app.routers.user import router as user_router
 from app.routers.billing import router as billing_router
-# from app.routers.admin import router as admin_router
-# from app.routers.test_billing import router as test_billing_router
+
 from app.routers.sub_render import router as sub_render_router
 from app.routers import admin
+from app.services.subscription_monitor import check_expiring_subscriptions
 
 # Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Здесь можно оставить другие фоновые задачи при необходимости
-    yield  # Сервер работает
-    # Здесь можно добавить cleanup, если потребуется
+    # Проверять раз в 24 часа
+    asyncio.create_task(_run_daily_subscription_check())
+    yield
+
+async def _run_daily_subscription_check():
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            await check_expiring_subscriptions()
+        except Exception as e:
+            logger.error(f"Subscription monitor error: {e}")
 
 
 app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0", lifespan=lifespan)

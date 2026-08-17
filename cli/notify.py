@@ -1,80 +1,48 @@
-#!/usr/bin/env python3
 """
-Отправка алертов администраторам в Telegram.
+CLI для отправки уведомлений.
 Использование:
-  uadmin notify --message "Сервер G-1 недоступен"
-  uadmin notify --test
+    uv run cli/notify.py --user TG_ID "текст"
+    uv run cli/notify.py --admin "текст"
+    uv run cli/notify.py --broadcast "текст"
 """
-
-import os
 import asyncio
-import logging
+import sys
 from pathlib import Path
-import click
-from dotenv import load_dotenv
-import httpx
 
-logger = logging.getLogger(__name__)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
-env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(env_path)
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-TG_ADMIN = os.getenv("TG_ADMIN", "")
-
-
-async def send_telegram_message(tg_id: int, text: str) -> bool:
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN не задан")
-        return False
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={"chat_id": tg_id, "text": text, "parse_mode": "HTML"}
-            )
-            if resp.status_code == 200:
-                return True
-            else:
-                logger.error(f"Telegram API: {resp.status_code} {resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
-        return False
+import argparse
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import AsyncSessionLocal
+from app.services.sender import (
+    send_telegram_message,
+    send_admin_alert,
+    broadcast_to_all,
+)
 
 
-async def send_admin_alert(message: str) -> dict:
-    if not TG_ADMIN:
-        return {"status": "error", "message": "TG_ADMIN не задан в .env"}
+async def main():
+    parser = argparse.ArgumentParser(description="Ulysses notification sender")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--user", type=int, help="Telegram user ID")
+    group.add_argument("--admin", action="store_true", help="Send to admins")
+    group.add_argument("--broadcast", action="store_true", help="Send to all users")
+    parser.add_argument("message", type=str, help="Message text")
+    args = parser.parse_args()
 
-    admin_ids = [int(x.strip()) for x in TG_ADMIN.split(",") if x.strip()]
-    results = {}
+    if args.user:
+        ok = await send_telegram_message(args.user, args.message)
+        print(f"{'✅' if ok else '❌'} Sent to {args.user}")
 
-    for admin_id in admin_ids:
-        text = f"🚨 <b>Ulysses VPN Alert</b>\n\n{message}\n\n<code>tg://{admin_id}</code>"
-        ok = await send_telegram_message(tg_id=admin_id, text=text)
-        results[str(admin_id)] = "OK" if ok else "FAIL"
+    elif args.admin:
+        ok = await send_admin_alert(args.message)
+        print(f"{'✅' if ok else '❌'} Admin alert sent")
 
-    return {"status": "ok", "results": results}
+    elif args.broadcast:
+        async with AsyncSessionLocal() as session:
+            result = await broadcast_to_all(session, args.message)
+            print(f"📊 Broadcast: sent={result['sent']}, failed={result['failed']}, total={result['total']}")
 
 
-@click.command()
-@click.option("--message", "-m", help="Текст алерта")
-@click.option("--test", is_flag=True, help="Отправить тестовый алерт")
-def notify(message, test):
-    if test:
-        message = "Тестовый алерт. Система мониторинга работает."
-    if not message:
-        click.echo("Укажи --message или --test")
-        return
-
-    async def _run():
-        result = await send_admin_alert(message)
-        if result["status"] == "ok":
-            for admin_id, status in result["results"].items():
-                click.echo(f"  Admin {admin_id}: {status}")
-        else:
-            click.echo(f"{result['message']}")
-
-    asyncio.run(_run())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -12,7 +12,7 @@
       { slug: 'index', title: 'Содержание Книги' },
       // Глава 1
       { title: 'Эволюция хищников', chapter: true },
-      { slug: 'threats', title: 'Классификация Угроз и Перспектив' },
+      { slug: 'threats', title: 'Классификация Угроз' },
       { slug: 'local-threats', title: 'локальные угрозы' },
       { slug: 'global-threats', title: 'глобальные угрозы' },
       { slug: 'future-threats', title: 'угрозы будущего' },
@@ -28,10 +28,10 @@
 
       // Глава 4
       { title: 'Справка по Протоколам и Транспортам', chapter: true },
-      { slug: 'classic-protocols', title: 'Прокси-Протоколы: VLESS, VMess, Trojan, Shadowsocks (версии AEAD и 2022), Протокол Mieru' },
+      { slug: 'classic-protocols', title: 'Прокси-Протоколы: VLESS, VMess, Trojan, Shadowsocks (версии AEAD и 2022), Mieru' },
       { slug: 'udp-protocols', title: 'Udp-Ориентированные Высокоскоростные Протоколы: Hysteria2, TUIC, WireGuard' },
       { slug: 'mask', title: 'Технологии Маскировки и Защиты Трафика: Reality, ShadowTLS' },
-      { slug: 'transports', title: 'Сетевые Транспорты И Обертки: TCP, WebSockets, gRPC, HTTPUpgrade, xHTTP' },
+      { slug: 'transports', title: 'Сетевые Транспорты и Обертки: TCP, WebSockets, gRPC, HTTPUpgrade, xHTTP' },
       { slug: 'additional-services', title: 'Вспомогательные и Встроенные Сервисы: SSH Proxy, MTProto, DNS over HTTPS' },
 
       // Глава 5

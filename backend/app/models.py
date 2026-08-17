@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, BigInteger, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, Integer, BigInteger, Float, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -12,6 +12,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     tg_user_id = Column(BigInteger, nullable=True, index=True)
     tg_username = Column(String(255), nullable=True)
+    tg_lang = Column(String(10), default="ru")
     email = Column(String(255), unique=True, index=True, nullable=True)
     hiddify_uuid = Column(UUID(as_uuid=True), unique=True, nullable=True, default=uuid.uuid4)
 
@@ -38,6 +39,9 @@ class Subscription(Base):
     provisioning_attempts = Column(Integer, default=0)
     last_provisioning_at = Column(DateTime(timezone=True), nullable=True)
     provisioning_error = Column(Text, nullable=True)
+    notified_3d = Column(Boolean, default=False)
+    notified_1d = Column(Boolean, default=False)
+    notified_expired = Column(Boolean, default=False)
     activated_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="subscriptions")

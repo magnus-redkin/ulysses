@@ -47,6 +47,7 @@ CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     tg_user_id BIGINT,
     tg_username VARCHAR(100),
+    tg_lang VARCHAR(10) DEFAULT 'ru',
     email VARCHAR(255) UNIQUE,
     hiddify_uuid UUID UNIQUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -68,6 +69,9 @@ CREATE TABLE subscriptions (
     provisioning_attempts INTEGER DEFAULT 0,
     last_provisioning_at TIMESTAMPTZ,
     provisioning_error TEXT,
+    notified_3d BOOLEAN DEFAULT FALSE,
+    notified_1d BOOLEAN DEFAULT FALSE,
+    notified_expired BOOLEAN DEFAULT FALSE,
     activated_at TIMESTAMPTZ
 );
 
