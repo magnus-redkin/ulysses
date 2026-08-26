@@ -1,9 +1,9 @@
 """
 CLI для отправки уведомлений.
 Использование:
-    uv run cli/notify.py --user TG_ID "текст"
-    uv run cli/notify.py --admin "текст"
-    uv run cli/notify.py --broadcast "текст"
+    uadmin notify --user TG_ID "текст"
+    uadmin notify --admin "текст"
+    uadmin notify --broadcast "текст"
 """
 import asyncio
 import sys
@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
-import argparse
-from sqlalchemy.ext.asyncio import AsyncSession
+import click
+
 from app.database import AsyncSessionLocal
 from app.services.sender import (
     send_telegram_message,
@@ -21,28 +21,40 @@ from app.services.sender import (
 )
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="Ulysses notification sender")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--user", type=int, help="Telegram user ID")
-    group.add_argument("--admin", action="store_true", help="Send to admins")
-    group.add_argument("--broadcast", action="store_true", help="Send to all users")
-    parser.add_argument("message", type=str, help="Message text")
-    args = parser.parse_args()
+@click.group(name="notify", help="Отправка уведомлений пользователям.")
+def notify():
+    """Команды отправки сообщений."""
+    pass
 
-    if args.user:
-        ok = await send_telegram_message(args.user, args.message)
-        print(f"{'✅' if ok else '❌'} Sent to {args.user}")
 
-    elif args.admin:
-        ok = await send_admin_alert(args.message)
-        print(f"{'✅' if ok else '❌'} Admin alert sent")
+@notify.command(name="user")
+@click.argument("tg_id", type=int)
+@click.argument("message", type=str)
+def notify_user(tg_id: int, message: str):
+    """Отправить сообщение конкретному пользователю."""
+    ok = asyncio.run(send_telegram_message(tg_id, message))
+    click.echo(f"{'✅' if ok else '❌'} Sent to {tg_id}")
 
-    elif args.broadcast:
+
+@notify.command(name="admin")
+@click.argument("message", type=str)
+def notify_admin(message: str):
+    """Отправить алерт всем админам."""
+    ok = asyncio.run(send_admin_alert(message))
+    click.echo(f"{'✅' if ok else '❌'} Admin alert sent")
+
+
+@notify.command(name="broadcast")
+@click.argument("message", type=str)
+def notify_broadcast(message: str):
+    """Отправить сообщение всем пользователям."""
+    async def _run():
         async with AsyncSessionLocal() as session:
-            result = await broadcast_to_all(session, args.message)
-            print(f"📊 Broadcast: sent={result['sent']}, failed={result['failed']}, total={result['total']}")
+            result = await broadcast_to_all(session, message)
+            click.echo(f"📊 Broadcast: sent={result['sent']}, failed={result['failed']}, total={result['total']}")
+
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    notify()

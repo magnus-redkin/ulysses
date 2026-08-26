@@ -1,8 +1,11 @@
 <script>
+  // web/src/routes/admin/components/Header.svelte
     import { enhance } from '$app/forms';
 
     // Считываем статус системы ('ok' или 'error') из главного файла-оркестратора
-    let { systemStatus = 'ok' } = $props();
+  // let { systemStatus = 'ok' } = $props();
+  let { systemStatus = 'ok', onNotifyClick } = $props();
+
 </script>
 
 <header class="bg-slate-900 border-b border-slate-800 p-4 flex justify-between items-center shrink-0">
@@ -10,7 +13,7 @@
     <div class="flex gap-2 items-center">
 
         <!-- КНОПКА-ИНДИКАТОР МОНИТОРИНГА СЕРВЕРА -->
-        <form method="POST" action="?/executeCommand" use:enhance class="m-0">
+        <form method="POST" action="?/executeCommand" class="m-0">
             <input type="hidden" name="command" value="system" />
             <button
                 type="submit"
@@ -23,33 +26,28 @@
             </button>
         </form>
 
-        <form method="POST" action="?/executeCommand" use:enhance class="m-0">
+        <form method="POST" action="?/executeCommand" class="m-0">
             <input type="hidden" name="command" value="stats" />
             <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm transition-colors cursor-pointer">
                 📊 Статистика
             </button>
         </form>
 
-        <form method="POST" action="?/executeCommand" use:enhance class="m-0">
+        <form method="POST" action="?/executeCommand" class="m-0">
             <input type="hidden" name="command" value="check" />
             <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm transition-colors cursor-pointer">
                 🔍 Чек проблем
             </button>
         </form>
 
-        <form method="POST" action="?/executeCommand" use:enhance class="m-0">
+        <form method="POST" action="?/executeCommand" class="m-0">
             <input type="hidden" name="command" value="fix" />
             <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm transition-colors cursor-pointer">
                 🔧 Исправить
             </button>
         </form>
 
-        <form method="POST" action="?/executeCommand" use:enhance class="m-0">
-            <input type="hidden" name="command" value="notify" />
-            <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm transition-colors cursor-pointer">
-                📨 Уведомить
-            </button>
-        </form>
+        <button type="button" onclick={onNotifyClick} class="...">📨 Уведомить</button>
 
         <form method="POST" action="?/logout" class="m-0">
             <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm transition-colors cursor-pointer font-medium">

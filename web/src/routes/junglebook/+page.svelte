@@ -1,6 +1,5 @@
 <script>
-  import { page } from '$app/state';
   import JungleBook from '$lib/components/JungleBook.svelte';
 </script>
 
-<JungleBook slug={page.params.slug} />
+<JungleBook slug="index" />

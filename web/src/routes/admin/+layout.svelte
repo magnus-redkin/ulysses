@@ -1,4 +1,5 @@
 <script>
+  // web/src/routes/admin/+layout.svelte
     let { children } = $props();
 </script>
 

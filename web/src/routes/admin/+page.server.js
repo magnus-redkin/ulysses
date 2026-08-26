@@ -68,20 +68,66 @@ export const actions = {
     throw redirect(303, '/admin');
   },
 
+  notifyUsers: async ({ request, fetch }) => {
+    const data = await request.formData();
+    const target = data.get('target');        // 'all' | 'user' | 'admin'
+    const message = data.get('message');
+    const tg_user_id = data.get('tg_user_id');
+
+    if (!message || !target) {
+      return fail(400, { modalData: { error: 'Введите текст и выберите получателей' }, command: 'notify' });
+    }
+
+    const payload = { target, message };
+    if (target === 'user') {
+      const uid = parseInt(tg_user_id, 10);
+      if (!uid) {
+        return fail(400, { modalData: { error: 'Укажите Telegram ID пользователя' }, command: 'notify' });
+      }
+      payload.tg_user_id = uid;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_API_URL}/api/admin/notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': process.env.HOST_API_KEY || ''
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { modalData: { error: err.detail || `HTTP ${res.status}` }, command: 'notify' };
+      }
+
+      const result = await res.json();
+      return { modalData: { result }, command: 'notify' };
+    } catch (err) {
+      return { modalData: { error: err.message }, command: 'notify' };
+    }
+  },
+
   executeCommand: async ({ request, fetch }) => {
-      const data = await request.formData();
-      const command = data.get('command'); // stats, check, fix, notify, system
+    const data = await request.formData();
+    const command = data.get('command'); // stats, check, fix, notify, system
 
       let endpoint = '/api/admin/stats';
       let method = 'GET';
 
       // Карта маршрутов к бэкенду FastAPI (порт 8000)
       if (command === 'check') endpoint = '/api/admin/check';
-      if (command === 'fix') { endpoint = '/api/admin/fix/sync'; method = 'POST'; }
+    if (command === 'fix') { endpoint = '/api/admin/fix/process-pending'; method = 'POST'; }
       if (command === 'system') endpoint = '/api/admin/system';
 
     try {
-      const res = await fetch(`${BACKEND_API_URL}${endpoint}`, { method });
+      const res = await fetch(`${BACKEND_API_URL}${endpoint}`, {
+        method,
+        headers: {
+          'X-API-Key': process.env.HOST_API_KEY || '' // добавляем ключ
+        }
+      });
       if (!res.ok) return { modalData: { error: `HTTP ${res.status}` }, command };
       return { modalData: await res.json(), command };
     } catch (err) {
@@ -192,6 +238,4 @@ export const actions = {
         return fail(500, { error: err.message });
     }
   }
-
-
 };

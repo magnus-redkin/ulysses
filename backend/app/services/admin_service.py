@@ -219,3 +219,24 @@ async def check_hiddify_sync(db: AsyncSession, limit: int = 1000) -> dict:
         "status_mismatches": mismatches,
         "anomalies": anomalies
     }
+
+async def cleanup_inactive_users(db: AsyncSession, hours: int = 24) -> int:
+    """
+    Удаляет пользователей, у которых нет ни одной подписки и которые созданы более `hours` часов назад.
+    Возвращает количество удалённых записей.
+    """
+    res = await db.execute(
+        text("""
+            DELETE FROM users u
+            WHERE u.id IN (
+                SELECT u2.id
+                FROM users u2
+                LEFT JOIN subscriptions s ON s.user_id = u2.id
+                WHERE s.id IS NULL
+                  AND u2.created_at < NOW() - make_interval(hours := :hours)
+            )
+        """),
+        {"hours": hours}
+    )
+    await db.commit()
+    return res.rowcount

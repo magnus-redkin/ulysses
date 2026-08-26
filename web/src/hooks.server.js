@@ -1,3 +1,5 @@
+// web/src/hooks.server.js
+
 import { redirect } from '@sveltejs/kit';
 import { isValidSession } from '$lib/server/auth';
 

@@ -9,12 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import verify_api_key
 
+from pydantic import BaseModel, Field
+
 from app.services.admin_service import (
     get_diagnostics,
     cleanup_invoices,
     get_stats,
     process_pending_provisioning,
-    check_hiddify_sync
+    check_hiddify_sync,
+    cleanup_inactive_users
 )
 
 
@@ -25,6 +28,12 @@ router = APIRouter(
     tags=["Admin"],
     dependencies=[Depends(verify_api_key)]
 )
+
+class NotifyPayload(BaseModel):
+    target: str = Field(..., description="all | user | admin")
+    message: str = Field(..., min_length=1, max_length=4000)
+    tg_user_id: Optional[int] = Field(None, description="ID пользователя для target=user")
+
 
 
 @router.get("/check")
@@ -122,3 +131,32 @@ async def fix_process_pending(
     processed = await process_pending_provisioning(db, limit)
     logger.info(f"👷 Обработано зависших подписок: {processed}")
     return {"status": "processed", "processed_count": processed}
+
+@router.post("/notify")
+async def admin_notify(payload: NotifyPayload, db: AsyncSession = Depends(get_db)):
+    """Отправка уведомлений из веб-админки."""
+    from app.services.sender import send_telegram_message, send_admin_alert, broadcast_to_all
+
+    if payload.target == "all":
+        result = await broadcast_to_all(db, payload.message)
+        return {"status": "sent", "sent": result["sent"], "failed": result["failed"], "total": result["total"]}
+    elif payload.target == "user":
+        if not payload.tg_user_id:
+            raise HTTPException(status_code=400, detail="tg_user_id required for user target")
+        ok = await send_telegram_message(payload.tg_user_id, payload.message)
+        return {"status": "sent" if ok else "failed"}
+    elif payload.target == "admin":
+        ok = await send_admin_alert(payload.message)
+        return {"status": "sent" if ok else "failed"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid target")
+
+@router.post("/fix/cleanup-inactive-users")
+async def fix_cleanup_inactive_users(
+    hours: int = Query(24, ge=1, le=720, description="Возраст в часах, старше которого удалять"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Удалить пользователей без подписок, созданных более N часов назад."""
+    deleted = await cleanup_inactive_users(db, hours)
+    logger.info(f"Очистка неактивных пользователей: удалено {deleted} записей")
+    return {"status": "cleaned", "deleted_count": deleted}

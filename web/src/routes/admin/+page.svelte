@@ -4,7 +4,8 @@
     import Sidebar from './components/Sidebar.svelte';
     import Chat from './components/Chat.svelte';
     import BillingCard from './components/BillingCard.svelte';
-    import Modal from './components/Modal.svelte';
+  import Modal from './components/Modal.svelte';
+  import NotifyModal from './components/NotifyModal.svelte';
 
     let { data, form } = $props();
 
@@ -12,7 +13,8 @@
     let selectedTicket = $state(null);
     let activeModal = $state(false);
     let currentUserInfo = $state(null);
-    let isLoadingUserInfo = $state(false);
+  let isLoadingUserInfo = $state(false);
+  let showNotifyModal = $state(false);
 
     // Логика открытия модалки при получении ответа от сервера
     $effect(() => {
@@ -99,7 +101,7 @@
     <Login {form} />
 {:else}
     <div class="flex flex-col flex-1 bg-slate-950 text-slate-200 overflow-hidden w-full">
-        <Header />
+      <Header onNotifyClick={() => showNotifyModal = true} />
 
         <main class="flex flex-1 overflow-hidden w-full">
             <Sidebar
@@ -142,3 +144,8 @@
         {/if}
     {/snippet}
 </Modal>
+
+<NotifyModal
+    show={showNotifyModal}
+    onClose={() => showNotifyModal = false}
+/>

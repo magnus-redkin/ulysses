@@ -1,3 +1,5 @@
+# app/models.py
+
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, BigInteger, Float, DateTime, ForeignKey, Text, Boolean

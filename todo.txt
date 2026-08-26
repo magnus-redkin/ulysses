@@ -6,3 +6,11 @@ TODO:
 - оптимизировать работу бота
 - рассылка об окончании подписки - за три дня, за день
 - broadcast сообщение всем пользователям
+
+    Код создания пользователя в Hiddify (обычно backend/app/services/hiddify_client.py)
+
+    Код активации бесплатной подписки (backend/app/services/free_subscription.py)
+
+    Код, который генерирует UUID и вызывает HFM API (может быть в activation_manager.py или billing_service.py)
+
+    Схему таблиц users и subscriptions (модели из models.py)
