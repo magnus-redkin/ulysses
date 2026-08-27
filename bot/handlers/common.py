@@ -12,6 +12,8 @@ from bot.utils import api_call, get_user_lang, set_user_lang
 
 from bot.localization import LOCALIZATION
 
+# from app.services.user_service import get_user_balance
+
 router = Router()
 
 # ============================================================
@@ -129,7 +131,6 @@ async def cmd_lang(message: Message):
 @router.message(Command("info"))
 @router.callback_query(F.data == "check_balance")
 async def show_user_balance(event):
-    """Выводит или обновляет актуальный баланс трафика и статус подписки пользователя."""
     lang = await get_user_lang(event)
     is_callback = isinstance(event, CallbackQuery)
     message_obj = event.message if is_callback else event
@@ -138,14 +139,21 @@ async def show_user_balance(event):
     target_url = f"{BACKEND_API_URL}/api/user/balance?tg_user_id={tg_user_id}"
     raw_balance = await api_call("GET", target_url, api_key=HOST_API_KEY)
 
-    if not raw_balance:
-        await message_obj.answer("❌ Не удалось получить данные. Попробуйте позже.")
+    if not raw_balance or raw_balance.get("is_active") is False:
+        # Пользователь без активной подписки
+        text = LOCALIZATION[lang]["no_subscription_info"]
+        reply_kb = KEYBOARDS["menu"](lang=lang)  # или back
+        if is_callback:
+            try:
+                await message_obj.edit_text(text=text, reply_markup=reply_kb, parse_mode="HTML")
+            except Exception:
+                pass
+            await event.answer()
+        else:
+            await message_obj.answer(text=text, reply_markup=reply_kb, parse_mode="HTML")
         return
 
-    if raw_balance:
-        print(f"DEBUG BALANCE DATA: {raw_balance}") # <-- Добавьте эту строчку для проверки полей
-
-
+    # Если подписка активна – показываем полный баланс
     balance_text = format_balance_from_state(raw_balance, lang=lang)
 
     if is_callback:
@@ -157,7 +165,7 @@ async def show_user_balance(event):
     else:
         await message_obj.answer(text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
 
-
+###
 
 
 @router.callback_query(F.data.startswith("set_lang:"))
@@ -226,3 +234,18 @@ async def handle_text_tickets(message: Message):
         logger.error(f"❌ Failed to proxy ticket to web backend: {e}")
 
     await message.answer(LOCALIZATION[lang]["ticket_error"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+
+async def has_active_subscription(tg_user_id: int) -> bool:
+    """Проверяет, есть ли у пользователя активная подписка или хотя бы одна запись в subscriptions."""
+    try:
+        balance = await api_call(
+            "GET",
+            f"{BACKEND_API_URL}/api/user/balance?tg_user_id={tg_user_id}",
+            api_key=HOST_API_KEY
+        )
+        if balance and balance.get("is_active"):
+            return True
+        # Если API вернул ошибку или нет подписки, возвращаем False
+        return False
+    except Exception:
+        return False

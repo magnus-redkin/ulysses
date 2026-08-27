@@ -1,4 +1,6 @@
 <script>
+  // src/routes/admin/components/Chat.svelte
+
     import { enhance } from '$app/forms';
     import { onMount } from 'svelte';
 
@@ -39,7 +41,7 @@
                 const result = await response.json();
                 if (result.success) {
                     // ОЧИЩАЕМ ЧАТ - устанавливаем selectedTicket в null
-                    selectedTicket = null;
+                    // selectedTicket = null;
 
                     // Обновляем список тикетов
                     const ticketsResponse = await fetch('/admin/api/tickets');

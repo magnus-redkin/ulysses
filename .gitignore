@@ -16,6 +16,7 @@ build/
 
 topology.json
 backend/app/private/
+gryphon/
 
 # Виртуальное окружение
 .venv/

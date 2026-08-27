@@ -2,6 +2,10 @@
 
 LOCALIZATION = {
     "ru": {
+        "no_subscription_info": "ℹ️ <b>О сервисе Ulysses VPN</b>\n\n"
+                        "Это защищённый персональный туннель для доступа к свободному интернету.\n\n"
+                        "У вас пока нет активной подписки. Выберите тариф, чтобы получить ссылку для подключения.\n\n"
+                        "👉 <i>Выберите интересующий вас раздел:</i>",
         "status_title": "📊 <b>Статус подписки</b>\n\n",
         "status_active": "🟢 Активна",
         "status_paused": "🔴 Приостановлена",
@@ -27,6 +31,10 @@ LOCALIZATION = {
         "support_text": "🆘 <b>Служба технической поддержки</b>\n\nЕсли у вас возникли проблемы с настройкой подключения, оплатой заказа или активацией ключа, наша команда готова вам помочь!\n\n<b>Контакты для связи:</b>\n• Наш официальный канал поддержки - здесь.\n• Время работы: ежедневно с 09:00 до 21:00 (по МСК).\n\n<b>Важная информация по платежам:</b>\nЕсли ваш платёж через систему оплаты прошёл, но баланс или доступ в боте не обновился в течение 10 минут, пожалуйста, пришлите в чат поддержки <i>снимок экрана (скриншот) квитанции об оплате</i> или ID транзакции из истории платежей. Мы активируем ваш доступ вручную."
     },
     "en": {
+        "no_subscription_info": "ℹ️ <b>About Ulysses VPN</b>\n\n"
+                        "This is a secure personal tunnel for accessing the free internet.\n\n"
+                        "You don't have an active subscription yet. Choose a plan to get your connection link.\n\n"
+                        "👉 <i>Select the section you are interested in:</i>",
         "status_title": "📊 <b>Subscription Status</b>\n\n",
         "status_active": "🟢 Active",
         "status_paused": "🔴 Suspended",

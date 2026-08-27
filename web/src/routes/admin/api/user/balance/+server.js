@@ -27,7 +27,13 @@ export async function GET({ cookies, url }) {
   if (hiddifyUuid) backendParams.set('hiddify_uuid', hiddifyUuid);
 
   try {
-    const resp = await fetch(`${BACKEND_URL}/api/user/balance?${backendParams}`);
+      // const resp = await fetch(`${BACKEND_URL}/api/user/balance?${backendParams}`);
+      const resp = await fetch(`${BACKEND_URL}/api/user/balance?${backendParams}`, {
+          headers: {
+              'X-API-Key': process.env.HOST_API_KEY || ''
+          }
+      });
+
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       return json(

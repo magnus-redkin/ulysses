@@ -112,7 +112,7 @@ def system_info(component, logs, lines):
         from app.system_info import collect_system_metrics
         metrics = await collect_system_metrics()
 
-        has_manual_bot = len(find_manual_conflicting_processes(search_term="ulysses-bot/main.py")) > 0
+        has_manual_bot = len(find_manual_conflicting_processes(search_term="bot/main.py")) > 0
         has_manual_back = len(find_manual_conflicting_processes(port=8000)) > 0
 
         # --- СЦЕНАРИЙ 1: ALL (Базовый дашборд) ---
@@ -188,7 +188,7 @@ def system_info(component, logs, lines):
 
             console.print(Panel(f"Статус: [{color}]{status_text}[/{color}]", title="🤖 Подробный анализ Telegram Bot", expand=False))
 
-            conflicts = find_manual_conflicting_processes(search_term="ulysses-bot/main.py")
+            conflicts = find_manual_conflicting_processes(search_term="bot/main.py")
             if conflicts and status == "RUNNING":
                 console.print("[bold red]🚨 Конфликт: Бот запущен и в systemd, и вручную в консоли![/bold red]")
                 for c in conflicts:

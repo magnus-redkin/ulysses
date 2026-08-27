@@ -1,117 +1,117 @@
 #!/bin/bash
+# Ulysses Service Manager
+# Использование:
+#   ./service.sh          - development mode
+#   ./service.sh --prod   - production mode
+#   ./service.sh stop     - полная остановка всех сервисов
+#   ./service.sh status   - показать статус systemd-сервисов и портов
 
-# Проверка наличия .env файла
-if [ ! -f .env ]; then
-    echo "❌ Ошибка: .env файл не найден!"
-    exit 1
-fi
+set -e
 
-# Загрузка переменных из .env
-set -a
-source .env
-set +a
+# Определяем корневую директорию проекта (где лежит этот скрипт)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 
-# Цвета для вывода
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Цвета
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-SERVICES=("postgresql.service" "ulysses-backend.service" "ulysses-web.service" "ulysses-bot.service")
+stop_all() {
+    echo -e "${YELLOW}⏹ Остановка всех сервисов...${NC}"
+    sudo systemctl stop ulysses-backend ulysses-bot ulysses-web 2>/dev/null || true
+    sudo fuser -k 8000/tcp 5173/tcp 3000/tcp 2>/dev/null || true
+    echo -e "${GREEN}✅ Все сервисы остановлены${NC}"
+}
 
-echo "╔════════════════════════════════════════════════════════════╗"
-echo "║        Ulysses Lab - Статус сервисов                      ║"
-echo "╚════════════════════════════════════════════════════════════╝"
-echo "📅 $(date '+%Y-%m-%d %H:%M:%S')"
-echo ""
+start_dev() {
+    cd "$PROJECT_ROOT"
 
-for SERVICE in "${SERVICES[@]}"; do
-    # Получаем статус
-    STATUS=$(systemctl is-active "$SERVICE" 2>/dev/null)
-
-    case "$STATUS" in
-        active)
-            if systemctl status "$SERVICE" --no-pager | grep -q "active (running)"; then
-                echo -e "${GREEN}●${NC} $SERVICE ${GREEN}✅ Работает${NC}"
-            else
-                echo -e "${YELLOW}●${NC} $SERVICE ${YELLOW}⚠️ Запущен (но не в foreground)${NC}"
-            fi
-            ;;
-        inactive|dead|failed)
-            echo -e "${RED}●${NC} $SERVICE ${RED}❌ Остановлен${NC}"
-            echo "   ➜ Попытка запуска..."
-            sudo systemctl start "$SERVICE" 2>/dev/null
-            sleep 1.5
-            if systemctl is-active --quiet "$SERVICE"; then
-                echo -e "   ${GREEN}✅ Успешно запущен${NC}"
-            else
-                echo -e "   ${RED}❌ Не удалось запустить${NC}"
-                echo "   ➜ Логи: sudo journalctl -u $SERVICE -n 5 --no-pager"
-            fi
-            ;;
-        *)
-            echo -e "${RED}●${NC} $SERVICE ${RED}❌ Статус неизвестен ($STATUS)${NC}"
-            ;;
-    esac
-done
-
-echo ""
-echo "╔════════════════════════════════════════════════════════════╗"
-echo "║        Детальная информация по процессам                  ║"
-echo "╚════════════════════════════════════════════════════════════╝"
-
-echo "🔍 Проверка процессов, блокирующих порты и дублирующие службы..."
-MANUAL_PIDS=""
-
-# 1. Проверяем сетевые порты бэкенда (8000) и фронтенда (5173) через lsof
-for pid in $(sudo lsof -t -i:8000,5173 2>/dev/null); do
-    if ! cat /proc/$pid/cgroup 2>/dev/null | grep -q "system.slice"; then
-        if [ -n "$pid" ]; then
-            MANUAL_PIDS="$MANUAL_PIDS $pid"
-        fi
-    fi
-done
-
-# 2. ИСПРАВЛЕНО: Проверяем ручные процессы Телеграм-бота, у которого нет портов (по имени файла запуска)
-for pid in $(pgrep -f "bot/main.py" 2>/dev/null); do
-    if ! cat /proc/$pid/cgroup 2>/dev/null | grep -q "system.slice"; then
-        if [ -n "$pid" ] && [[ ! " $MANUAL_PIDS " =~ " $pid " ]]; then
-            MANUAL_PIDS="$MANUAL_PIDS $pid"
-        fi
-    fi
-done
-
-if [ -n "$MANUAL_PIDS" ]; then
-    echo -e "   ${YELLOW}⚠️ Найдены сторонние ручные процессы: $MANUAL_PIDS${NC}"
-    echo "   ➜ Жесткая принудительная остановка..."
-    for pid in $MANUAL_PIDS; do
-        sudo kill -9 $pid 2>/dev/null && echo -e "   ${GREEN}✅ PID $pid успешно завершен${NC}"
-    done
-    sleep 1
-else
-    echo -e "   ${GREEN}✅ Конфликтующих ручных процессов в фоне нет${NC}"
-fi
-echo ""
-
-for SERVICE in "${SERVICES[@]}"; do
-    if systemctl is-active --quiet "$SERVICE"; then
-        PID=$(systemctl show -p MainPID "$SERVICE" --value 2>/dev/null)
-        if [ "$PID" != "0" ] && [ "$PID" != "" ]; then
-            MEM=$(ps -o rss= -p "$PID" 2>/dev/null | awk '{printf "%.1f MB", $1/1024}')
-            CPU=$(ps -o %cpu= -p "$PID" 2>/dev/null | awk '{print $1"%"}')
-            echo -e "${BLUE}📊${NC} $SERVICE"
-            echo "   PID: $PID | Memory: $MEM | CPU: $CPU"
+    # Backend
+    if sudo lsof -i :8000 >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️ Backend уже запущен${NC}"
+    else
+        echo -e "${BLUE}🚀 Запуск backend (uvicorn --reload)...${NC}"
+        (cd backend && ../.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > /tmp/ulysses-backend.log 2>&1 &)
+        sleep 2
+        if sudo lsof -i :8000 >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Backend запущен${NC}"
         else
-            echo -e "${BLUE}📊${NC} $SERVICE (фоновый сервис)"
+            echo -e "${RED}❌ Backend не запустился! Лог: /tmp/ulysses-backend.log${NC}"
+            tail -n 20 /tmp/ulysses-backend.log
+            exit 1
         fi
     fi
-done
 
-echo ""
-echo "╔════════════════════════════════════════════════════════════╗"
-echo "║        Проверка доступности портов                        ║"
-echo "╚════════════════════════════════════════════════════════════╝"
+    # Web
+    if sudo lsof -i :5173 >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️ Web уже запущен${NC}"
+    else
+        echo -e "${BLUE}🚀 Запуск web (vite dev)...${NC}"
+        (cd web && pnpm run dev --host 0.0.0.0 > /tmp/ulysses-web.log 2>&1 &)
+        sleep 2
+        if sudo lsof -i :5173 >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Web запущен${NC}"
+        else
+            echo -e "${RED}❌ Web не запустился! Лог: /tmp/ulysses-web.log${NC}"
+            tail -n 20 /tmp/ulysses-web.log
+            exit 1
+        fi
+    fi
+
+    # Bot
+    if pgrep -f "bot/main.py" >/dev/null; then
+        echo -e "${YELLOW}⚠️ Bot уже запущен${NC}"
+    else
+        echo -e "${BLUE}🚀 Запуск bot...${NC}"
+        (PYTHONPATH="$PROJECT_ROOT:$PROJECT_ROOT/bot" "$PROJECT_ROOT/.venv/bin/python" "$PROJECT_ROOT/bot/main.py" > /tmp/ulysses-bot.log 2>&1 &)
+        sleep 2
+        if pgrep -f "bot/main.py" >/dev/null; then
+            echo -e "${GREEN}✅ Bot запущен${NC}"
+        else
+            echo -e "${RED}❌ Бот не запустился! Лог: /tmp/ulysses-bot.log${NC}"
+            tail -n 20 /tmp/ulysses-bot.log
+            exit 1
+        fi
+    fi
+}
+
+start_prod() {
+    cd "$PROJECT_ROOT"
+
+    echo -e "${BLUE}📦 Сборка web (pnpm build)...${NC}"
+    (cd web && pnpm build)
+
+    echo -e "${BLUE}🚀 Запуск production сервисов...${NC}"
+    sudo systemctl start postgresql
+    sudo systemctl start ulysses-backend
+    sudo systemctl start ulysses-web
+    sudo systemctl start ulysses-bot
+
+    echo -e "${GREEN}✅ Production сервисы запущены${NC}"
+}
+
+show_status() {
+    SERVICES=("postgresql.service" "ulysses-backend.service" "ulysses-web.service" "ulysses-bot.service")
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║        Ulysses Lab - Статус сервисов                      ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo "📅 $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+
+    for SERVICE in "${SERVICES[@]}"; do
+        if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+            echo -e "${GREEN}●${NC} $SERVICE ${GREEN}✅ Работает${NC}"
+        else
+            echo -e "${RED}●${NC} $SERVICE ${RED}❌ Остановлен${NC}"
+        fi
+    done
+
+
+    echo ""
+    check_port 8000 "Backend API"
+    check_port 5173 "Web Admin (dev)"
+    check_port 3000 "Web (prod)"
+    check_port 5432 "PostgreSQL"
+}
 
 check_port() {
     local port=$1
@@ -123,9 +123,24 @@ check_port() {
     fi
 }
 
-check_port 8000 "Backend API"
-check_port 5173 "Web Admin"
-check_port 5432 "PostgreSQL"
-
-echo ""
-echo "═══════════════════════════════════════════════════════════════"
+# ====================== MAIN ======================
+case "${1}" in
+    --prod)
+        stop_all
+        start_prod
+        ;;
+    stop)
+        stop_all
+        ;;
+    status)
+        show_status
+        ;;
+    "" | dev)
+        stop_all
+        start_dev
+        ;;
+    *)
+        echo "Использование: $0 [--prod|stop|status|dev]"
+        exit 1
+        ;;
+esac
