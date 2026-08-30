@@ -8,14 +8,18 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 class HiddifyProvisioner:
-    def __init__(self):
-        base = settings.HIDDIFY_API_URL.rstrip("/")
-        # ИСПРАВЛЕНО: Убрали слэш с конца, чтобы собирать URL безопасно
+    def __init__(self, api_url: str = None, api_key: str = None):
+        if api_url is None:
+            api_url = settings.HIDDIFY_API_URL
+        if api_key is None:
+            api_key = settings.HIDDIFY_API_KEY
+
+        base = api_url.rstrip("/")
         self.base_url = f"{base}/api/v2/admin/user"
         self.admin_base_url = f"{base}/api/v2/admin/"
-
+        self.api_key = api_key
         self.headers = {
-            "Hiddify-API-Key": settings.HIDDIFY_API_KEY,
+            "Hiddify-API-Key": api_key,
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
@@ -26,7 +30,8 @@ class HiddifyProvisioner:
         target_url = f"{self.admin_base_url}config/action/"
         logger.info(f"🔄 [HIDDIFY CLIENT] Применение конфигурации ядра... POST ➔ '{target_url}'")
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            # async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False) as client:
                 response = await client.post(target_url, headers=self.headers, json={"action": "apply"})
                 if response.status_code in (200, 201):
                     logger.info("✅ [HIDDIFY CLIENT] Конфигурация ядра успешно применена нодой.")

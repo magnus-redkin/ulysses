@@ -16,10 +16,34 @@
   let isLoadingUserInfo = $state(false);
   let showNotifyModal = $state(false);
 
+  let previousTicketIds = $state(new Set());
+  let audioCtx = null;
+
     // Логика открытия модалки при получении ответа от сервера
     $effect(() => {
         if (form?.modalData) activeModal = true;
     });
+
+  function playNotificationSound() {
+    try {
+      if (!audioCtx) audioCtx = new AudioContext();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.value = 0.3;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      setTimeout(() => osc.stop(), 200);
+    } catch (e) {
+      console.warn('Не удалось воспроизвести звук:', e);
+    }
+  }
+  // or:
+  // const audio = new Audio('/sounds/notification.mp3');
+  // audio.play().catch(e => console.warn(e));
+
 
     // Обработчик клика по тикету (загрузка баланса)
     async function handleSelectTicket(ticket) {
@@ -52,25 +76,35 @@
         }
     });
 
-    // Функция фонового опроса API
-    async function refreshTicketsSilently() {
-        try {
-            const res = await fetch('/admin/api/tickets');
-            if (res.ok) {
-                const body = await res.json();
-                liveTickets = [...body.tickets];
+  // Функция фонового опроса API
 
-                if (selectedTicket) {
-                    const updated = liveTickets.find(t => t._id === selectedTicket._id);
-                    if (updated) {
-                        selectedTicket = { ...updated };
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Ошибка фонового обновления тикетов:", e);
+  async function refreshTicketsSilently() {
+    try {
+      const res = await fetch('/admin/api/tickets');
+      if (res.ok) {
+        const body = await res.json();
+        liveTickets = [...body.tickets];
+
+        // Проверяем новые открытые тикеты
+        const currentOpenIds = new Set(liveTickets.filter(t => t.status === 'open').map(t => t._id));
+        const hasNew = [...currentOpenIds].some(id => !previousTicketIds.has(id));
+        if (hasNew && previousTicketIds.size > 0) {
+          playNotificationSound();
         }
+        previousTicketIds = currentOpenIds;
+
+        if (selectedTicket) {
+          const updated = liveTickets.find(t => t._id === selectedTicket._id);
+          if (updated) {
+            selectedTicket = { ...updated };
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Ошибка фонового обновления тикетов:", e);
     }
+  }
+
 
     // Запускаем таймер опроса
     $effect(() => {

@@ -20,8 +20,11 @@ from app.routers.bot import router as bot_router
 from app.routers.user import router as user_router
 from app.routers.billing import router as billing_router
 
+from app.routers.subscription import router as subscription_router
+
 from app.routers.sub_render import router as sub_render_router
 from app.routers import admin
+
 from app.services.subscription_monitor import check_expiring_subscriptions
 
 # Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
@@ -65,6 +68,7 @@ app.add_middleware(
 app.include_router(bot_router)
 app.include_router(user_router)
 app.include_router(billing_router)
+app.include_router(subscription_router)
 
 app.include_router(sub_render_router)
 app.include_router(admin.router)

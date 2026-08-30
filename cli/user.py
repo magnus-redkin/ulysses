@@ -133,7 +133,17 @@ async def user_delete(identifier):
         # Проверяем, есть ли что удалять на HFM
         if hiddify_uuid_str and hiddify_uuid_str not in ("", "None", "-"):
             console.print(f"[yellow]📡 Отправка запроса на удаление профиля {hiddify_uuid_str} с HFM...[/yellow]")
-            provisioner = HiddifyProvisioner()
+
+            from app.services.node_manager import node_manager
+            nodes = node_manager.get_hfm_nodes()
+            if not nodes:
+                console.print("[red]Нет нод в конфигурации[/red]")
+                return
+            # Для проверки возьмём первую ноду (или можно пройтись по всем)
+            node = nodes[0]
+            api_url = f"https://{node.get('domain')}/{node.get('admin_path')}"
+            provisioner = HiddifyProvisioner(api_url=api_url, api_key=node.get('api_key'))
+
 
             # ЗАЩИТА 1: Проверяем физическое наличие метода в коде
             if not hasattr(provisioner, "delete_user"):

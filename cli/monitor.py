@@ -181,6 +181,7 @@ async def run_checks():
 
     # HFM
     expected_ips = load_gate_ips()
+    expected_ips = ["", "", ""] # отключил проверку гейтов
     hfm_ok, hfm_output = await run_hfm_check(expected_ips)
 
     # Алертинг

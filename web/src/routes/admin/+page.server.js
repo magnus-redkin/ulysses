@@ -168,7 +168,8 @@ export const actions = {
                         body: JSON.stringify({
                             chat_id: ticket.tg_user_id,
                             text: `📩 *Ответ поддержки Ulysses Lab:*\n\n${safeText}`,
-                            parse_mode: 'Markdown'
+                          parse_mode: 'Markdown',
+                          disable_notification: true   // ← отключить звук у получателя
                         })
                     }
                 );
@@ -224,7 +225,8 @@ export const actions = {
                         body: JSON.stringify({
                             chat_id: ticket.tg_user_id,
                             text: '✅ *Ваш тикет закрыт администратором Ulysses Lab.*\n\nЕсли у вас остались вопросы, вы можете открыть новый тикет, написав сообщение в этот чат.',
-                            parse_mode: 'Markdown'
+                          parse_mode: 'Markdown',
+                          disable_notification: true   // ← отключить звук у получателя
                         })
                     }
                 );
