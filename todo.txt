@@ -3,3 +3,4 @@
 * TODO:
 - убрать ip гейтов в БД
 - hfm-g1
+- subscription_aggregator

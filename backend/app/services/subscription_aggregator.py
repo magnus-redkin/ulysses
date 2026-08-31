@@ -1,86 +1,232 @@
-import base64
+import json
 import logging
-from typing import List
+from typing import List, Dict
 import httpx
 
 from app.services.node_manager import node_manager
 
 logger = logging.getLogger(__name__)
 
-async def fetch_subscription_from_node(node: dict, hiddify_uuid: str) -> str:
+# Служебные типы outbound, которые не являются прокси
+SERVICE_TYPES = {"selector", "urltest", "direct", "block", "dns", "bypass"}
+
+UNSUPPORTED_TYPES = {"dnstt", "socks", "naive", "ssh"} # , "mieru"
+
+def _is_proxy_outbound(outbound: dict) -> bool:
+    ob_type = outbound.get("type")
+    return ob_type not in SERVICE_TYPES and ob_type not in UNSUPPORTED_TYPES
+
+def _deduplicate_outbounds(outbounds: List[Dict]) -> List[Dict]:
+    """Удаляет дубликаты по ключевым полям, оставляя первый вариант."""
+    seen = set()
+    unique = []
+    for ob in outbounds:
+        key = (
+            ob.get("type"),
+            ob.get("server"),
+            ob.get("server_port"),
+            ob.get("uuid", ob.get("password", "")),
+            ob.get("transport", {}).get("type", ""),
+            ob.get("transport", {}).get("path", ""),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(ob)
+    return unique
+
+def _make_human_tag(node: dict, outbound: dict, index: int = 0) -> str:
     """
-    Получает подписку пользователя с конкретной ноды.
-    Возвращает декодированную строку с URI протоколов.
+    Генерирует понятное имя тега для outbound-а.
+    Пример: 🇫🇮 FI — VLESS Reality
+    """
+    country_code = node.get("code", "??").upper()
+    flag = node.get("flag", "") or {
+        "AT": "🇦🇹",
+        "FI": "🇫🇮",
+        "RU": "🇷🇺"
+    }.get(country_code, "🏳️")
+
+    proto = outbound.get("type", "unknown").upper()
+    transport = ""
+    tls = outbound.get("tls", {})
+    if tls.get("reality", {}).get("enabled"):
+        transport = "Reality"
+    elif outbound.get("transport"):
+        transport = outbound["transport"].get("type", "")
+    else:
+        transport = ""
+
+    base = f"{flag} {country_code} — {proto}"
+    if transport:
+        base += f" {transport}"
+
+    if index > 0:
+        base += f" ({index+1})"
+    return base
+
+async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> dict | None:
+    """
+    Получает Sing-box JSON от конкретной ноды.
     """
     node_id = node.get("id", "unknown")
     domain = node.get("domain") or node.get("ip")
-    admin_path = node.get("admin_path")
+    sub_path = node.get("sub_path") or node.get("admin_path")
 
-    logger.info(f"🔍 Начинаем получение подписки с ноды {node_id} (domain={domain}, admin_path={admin_path})")
+    if not domain or not sub_path:
+        logger.error(f"❌ Нода {node_id}: не хватает domain или sub_path")
+        return None
 
-    if not domain or not admin_path:
-        logger.error(f"❌ Нода {node_id}: не хватает domain или admin_path")
-        return ""
-
-    sub_path = node.get("sub_path") # or node.get("admin_path")
-    url = f"https://{domain}/{sub_path}/{hiddify_uuid}/"
-    logger.info(f"📡 URL для запроса подписки: {url}")
+    url = f"https://{domain}/{sub_path}/{hiddify_uuid}/singbox/"
+    logger.info(f"📡 URL для Sing-box: {url}")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
-            logger.info(f"📥 Ответ от ноды {node_id}: HTTP {response.status_code}")
             if response.status_code == 200:
-                raw = response.text.strip()
-                logger.info(f"📦 Длина сырого ответа: {len(raw)} символов")
                 try:
-                    decoded = base64.b64decode(raw).decode("utf-8")
-                    logger.info(f"✅ Успешно декодировано {len(decoded)} символов с ноды {node_id}")
-                    return decoded
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось декодировать base64 с ноды {node_id}: {e}")
-                    return raw
+                    data = response.json()
+                    logger.info(f"✅ Получен Sing-box JSON с ноды {node_id} ({len(data.get('outbounds', []))} outbounds)")
+                    return data
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Нода {node_id}: невалидный JSON: {e}")
+                    return None
             else:
                 logger.error(f"❌ Нода {node_id} вернула HTTP {response.status_code}")
-                logger.error(f"Тело ответа: {response.text[:200]}")
-                return ""
+                return None
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к ноде {node_id}: {e}")
-        return ""
+        return None
 
-async def aggregate_subscriptions(hiddify_uuid: str) -> str:
+def merge_singbox_configs(configs: List[Dict], nodes: List[Dict]) -> Dict:
     """
-    Собирает подписки со всех HFM нод и возвращает объединённую строку.
+    Объединяет Sing-box конфиги с разных нод в один.
     """
-    logger.info(f"🚀 Запуск агрегации для UUID {hiddify_uuid}")
+    combined_outbounds = []
+
+    # Собираем все прокси outbounds
+    for node, config in zip(nodes, configs):
+        if not config:
+            continue
+        for ob in config.get("outbounds", []):
+            if _is_proxy_outbound(ob):
+                new_ob = ob.copy()
+                if "tunnel-per-resolver" in new_ob:
+                    del new_ob["tunnel-per-resolver"]
+                # Временно оставляем оригинальный тег, потом заменим
+                combined_outbounds.append((node, new_ob))
+
+    # Дедупликация
+    seen = set()
+    deduped = []
+    for node, ob in combined_outbounds:
+        key = (
+            ob.get("type"),
+            ob.get("server"),
+            ob.get("server_port"),
+            ob.get("uuid", ob.get("password", "")),
+            ob.get("transport", {}).get("type", ""),
+            ob.get("transport", {}).get("path", ""),
+        )
+        if key not in seen:
+            seen.add(key)
+            deduped.append((node, ob))
+
+    # Переименовываем теги с учётом возможных повторов имён
+    tag_counts = {}
+    final_outbounds = []
+    for node, ob in deduped:
+        original_tag = ob.get("tag", "unknown")
+        # Сначала создаём базовое имя
+        new_tag = _make_human_tag(node, ob, 0)
+        if new_tag in tag_counts:
+            tag_counts[new_tag] += 1
+            new_tag = f"{new_tag} ({tag_counts[new_tag]})"
+        else:
+            tag_counts[new_tag] = 0
+
+        ob["tag"] = new_tag
+        logger.info(f"🔄 Outbound: {original_tag} → {new_tag}")
+        final_outbounds.append(ob)
+
+    if not final_outbounds:
+        logger.error("❌ Нет прокси outbounds для объединения")
+        return {}
+
+    proxy_tags = [ob["tag"] for ob in final_outbounds]
+
+    selector = {
+        "type": "selector",
+        "tag": "proxy",
+        "outbounds": ["Auto", *proxy_tags],
+        "interrupt_exist_connections": True
+    }
+    urltest = {
+        "type": "urltest",
+        "tag": "Auto",
+        "outbounds": proxy_tags,
+        "url": "https://www.gstatic.com/generate_204",
+        "interval": "10m",
+        "tolerance": 200
+    }
+
+    final_outbounds_list = [
+        selector,
+        urltest,
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+        {"type": "dns", "tag": "dns-out"},
+        *final_outbounds
+    ]
+
+    route = {
+        "auto_detect_interface": True,
+        "override_android_vpn": True,
+        "final": "proxy",
+        "rule_set": [],
+        "rules": []
+    }
+    dns = {
+        "servers": [
+            {"address": "tcp://1.1.1.1", "address_resolver": "dns-local", "strategy": "prefer_ipv4", "tag": "dns-remote", "detour": "proxy"},
+            {"address": "8.8.8.8", "detour": "direct", "tag": "dns-local"},
+            {"address": "rcode://success", "tag": "dns-block"}
+        ],
+        "rules": [],
+        "final": "dns-local",
+        "reverse_mapping": True,
+        "strategy": "prefer_ipv4",
+        "independent_cache": True
+    }
+
+    return {
+        "outbounds": final_outbounds_list,
+        "route": route,
+        "dns": dns
+    }
+
+async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:
+    """
+    Главная функция агрегации: собирает Sing-box JSON со всех нод и объединяет.
+    """
+    logger.info(f"🚀 Запуск агрегации Sing-box для UUID {hiddify_uuid}")
     nodes = node_manager.get_hfm_nodes()
-    logger.info(f"📋 Найдено HFM нод: {len(nodes)}")
     if not nodes:
-        logger.error("❌ Нет доступных HFM нод для агрегации")
-        return ""
+        logger.error("❌ Нет доступных HFM нод")
+        return {}
 
-    all_links = []
+    configs = []
     for node in nodes:
         logger.info(f"🔄 Обрабатываем ноду {node.get('id')}")
-        links_str = await fetch_subscription_from_node(node, hiddify_uuid)
-        if links_str:
-            lines = [line.strip() for line in links_str.splitlines() if line.strip()]
-            logger.info(f"✅ С ноды {node.get('id')} получено {len(lines)} ссылок")
-            all_links.extend(lines)
+        cfg = await fetch_singbox_from_node(node, hiddify_uuid)
+        if cfg:
+            configs.append(cfg)
         else:
-            logger.warning(f"⚠️ С ноды {node.get('id')} ничего не получено")
+            configs.append(None)
 
-    if not all_links:
-        logger.error(f"❌ Не удалось получить ни одной подписки для UUID {hiddify_uuid}")
-        return ""
+    merged = merge_singbox_configs(configs, nodes)
+    if not merged:
+        logger.error("❌ Не удалось объединить Sing-box конфиги")
+        return {}
 
-    combined = "\n".join(all_links)
-    logger.info(f"🎉 Итого агрегировано {len(all_links)} ссылок с {len(nodes)} нод")
-    return combined
-
-def encode_subscription(links_str: str) -> str:
-    if not links_str:
-        return ""
-    encoded = base64.b64encode(links_str.encode("utf-8")).decode("utf-8")
-    logger.info(f"🔐 Закодировано в base64, длина {len(encoded)}")
-    return encoded
+    logger.info(f"✅ Агрегация завершена. Всего outbounds: {len(merged['outbounds'])}")
+    return merged

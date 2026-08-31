@@ -1,7 +1,7 @@
 # backend/app/routers/sub_render.py (после рефакторинга)
 
 from fastapi import APIRouter, HTTPException
-from app.services.subscription_aggregator import aggregate_subscriptions, encode_subscription
+from app.services.subscription_aggregator import aggregate_subscriptions
 
 router = APIRouter()
 
