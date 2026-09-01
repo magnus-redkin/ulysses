@@ -70,7 +70,7 @@ async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> dict | None:
     """
     node_id = node.get("id", "unknown")
     domain = node.get("domain") or node.get("ip")
-    sub_path = node.get("sub_path") or node.get("admin_path")
+    sub_path = node.get("admin_path")
 
     if not domain or not sub_path:
         logger.error(f"❌ Нода {node_id}: не хватает domain или sub_path")
@@ -209,7 +209,7 @@ async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:
     Главная функция агрегации: собирает Sing-box JSON со всех нод и объединяет.
     """
     logger.info(f"🚀 Запуск агрегации Sing-box для UUID {hiddify_uuid}")
-    nodes = node_manager.get_hfm_nodes()
+    nodes = node_manager.get_active_hfm_nodes()
     if not nodes:
         logger.error("❌ Нет доступных HFM нод")
         return {}

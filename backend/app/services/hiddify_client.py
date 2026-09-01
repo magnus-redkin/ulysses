@@ -123,6 +123,10 @@ class HiddifyProvisioner:
                     logger.warning(f"ℹ️ Пользователь {clean_uuid} не найден на HFM (404). Считаем удаленным.")
                     return {"success": True, "not_found": True}
 
+                elif response.status_code == 400 and "not found" in response.text.lower():
+                    logger.warning(f"ℹ️ Пользователь {clean_uuid} не найден на HFM (400 not found). Считаем удаленным.")
+                    return {"success": True, "not_found": True}
+
                 else:
                     logger.error(f"❌ Ошибка удаления {clean_uuid}: HTTP {response.status_code} - {response.text[:200]}")
                     return {"success": False, "not_found": False}

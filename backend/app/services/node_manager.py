@@ -27,14 +27,18 @@ class NodeManager:
             return {}
 
     def get_hfm_nodes(self) -> List[Dict]:
-        """Возвращает список всех HFM нод (type == 'hfm' или 'heart')."""
+        """Возвращает список всех активных HFM нод (type == 'hfm' или 'heart')."""
         result = []
         for key, node in self.nodes.items():
-            if node.get("type") in ["hfm", "heart"]:
+            if node.get("type") in ["hfm"]:
                 node_copy = node.copy()
                 node_copy["id"] = key
                 result.append(node_copy)
         return result
+
+    def get_active_hfm_nodes(self) -> List[Dict]:
+        """Возвращает только активные HFM ноды."""
+        return [node for node in self.get_hfm_nodes() if node.get("active", True)]
 
     def get_node(self, node_id: str) -> Dict:
         """Возвращает ноду по её идентификатору."""

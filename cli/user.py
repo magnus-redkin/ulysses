@@ -118,6 +118,9 @@ async def user_delete(identifier):
                 api_url = f"https://{node.get('domain')}/{node.get('admin_path')}"
                 provisioner = HiddifyProvisioner(api_url=api_url, api_key=node.get('api_key'))
                 result = await provisioner.delete_user(uuid=hiddify_uuid_str)
+                if result.get("not_found"):
+                    console.print(f"[yellow]ℹ️ Пользователь не найден на ноде {node.get('id')}, считаем удалённым.[/yellow]")
+                    continue
                 if not result["success"]:
                     console.print(f"[red]❌ Не удалось удалить на ноде {node.get('id')}[/red]")
                     delete_success = False
