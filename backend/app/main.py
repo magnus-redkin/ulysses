@@ -26,11 +26,17 @@ from app.routers.sub_render import router as sub_render_router
 from app.routers import admin
 
 from app.services.subscription_monitor import check_expiring_subscriptions
+from app.services.node_manager import node_manager
 
 # Создаем lifespan обработчик событий старта/остановки сервера (без монитора)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Проверять раз в 24 часа
+    # Обновляем параметры нод из SSH один раз при старте
+    try:
+        await node_manager.refresh()
+    except Exception as e:
+        logger.error(f"❌ Node refresh failed: {e}")
+
     asyncio.create_task(_run_daily_subscription_check())
     yield
 
@@ -41,7 +47,6 @@ async def _run_daily_subscription_check():
             await check_expiring_subscriptions()
         except Exception as e:
             logger.error(f"Subscription monitor error: {e}")
-
 
 app = FastAPI(title="Ulysses VPN Backend API", version="1.0.0", lifespan=lifespan)
 

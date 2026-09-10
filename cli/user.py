@@ -114,18 +114,16 @@ async def user_delete(identifier):
                 return
 
             delete_success = True
-            for node in nodes:
-                api_url = f"https://{node.get('domain')}/{node.get('admin_path')}"
-                provisioner = HiddifyProvisioner(api_url=api_url, api_key=node.get('api_key'))
-                result = await provisioner.delete_user(uuid=hiddify_uuid_str)
-                if result.get("not_found"):
-                    console.print(f"[yellow]ℹ️ Пользователь не найден на ноде {node.get('id')}, считаем удалённым.[/yellow]")
-                    continue
-                if not result["success"]:
-                    console.print(f"[red]❌ Не удалось удалить на ноде {node.get('id')}[/red]")
-                    delete_success = False
-                else:
-                    console.print(f"[green]✅ Удалён на ноде {node.get('id')}[/green]")
+            provisioner = HiddifyProvisioner()
+            result = await provisioner.delete_user(uuid=hiddify_uuid_str)
+
+            if result.get("not_found"):
+                console.print(f"[yellow]ℹ️ Пользователь не найден на нодах, считаем удалённым.[/yellow]")
+            elif not result["success"]:
+                console.print(f"[red]❌ Не удалось удалить на нодах[/red]")
+                delete_success = False
+            else:
+                console.print(f"[green]✅ Удалён на всех нодах[/green]")
 
             if not delete_success:
                 console.print("[red]⚠️ Удаление не на всех нодах. Локальная запись НЕ удалена.[/red]")
@@ -239,15 +237,14 @@ async def user_subscription_status(identifier):
             from app.services.node_manager import node_manager
             nodes = node_manager.get_hfm_nodes()
             found_on_nodes = []
+            provisioner = HiddifyProvisioner()
             for node in nodes:
-                api_url = f"https://{node.get('domain')}/{node.get('admin_path')}"
-                provisioner = HiddifyProvisioner(api_url=api_url, api_key=node.get('api_key'))
                 try:
                     exists = await provisioner.check_user_exists(hiddify_uuid_str)
                     if exists:
-                        found_on_nodes.append(node.get("id"))
+                        found_on_nodes.append(node.get("id", node.get("name", "unknown")))
                 except Exception as e:
-                    console.print(f"[amber]⚠️ Ошибка проверки на ноде {node.get('id')}: {e}[/amber]")
+                    console.print(f"[amber]⚠️ Ошибка проверки на ноде {node.get('id', node.get('name'))}: {e}[/amber]")
 
             if found_on_nodes:
                 hfm_status_str = f"[green]🟢 Найден на нодах: {', '.join(found_on_nodes)}[/green]"

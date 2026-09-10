@@ -12,6 +12,7 @@ from . import stats, notify, check, system_info, db, user
 from .pay import pay as pay_group
 from .monitor import monitor as monitor_group
 from .fix import fix as fix_group
+from .host import host as host_group
 
 from cli.notify import notify as notify_cmd
 
@@ -49,6 +50,8 @@ cli.add_command(fix_group)
 
 cli.add_command(pay_group)
 # cli.add_command(brain)
+
+cli.add_command(host_group)
 
 
 @cli.command(name="help")

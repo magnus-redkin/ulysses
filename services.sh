@@ -1,25 +1,41 @@
 #!/bin/bash
 # Ulysses Service Manager
 # Использование:
-#   ./service.sh          - development mode
-#   ./service.sh --prod   - production mode
-#   ./service.sh stop     - полная остановка всех сервисов
-#   ./service.sh status   - показать статус systemd-сервисов и портов
+#   ./services.sh          - production mode (systemd)
+#   ./services.sh --dev    - development mode
+#   ./services.sh stop     - полная остановка всех сервисов
+#   ./services.sh status   - показать статус systemd-сервисов и портов
 
 set -e
 
-# Определяем корневую директорию проекта (где лежит этот скрипт)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 
-# Цвета
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
 stop_all() {
     echo -e "${YELLOW}⏹ Остановка всех сервисов...${NC}"
-    sudo systemctl stop ulysses-backend ulysses-bot ulysses-web 2>/dev/null || true
+    sudo systemctl stop ulysses-backend ulysses-bot ulysses-web ulysses-monitor 2>/dev/null || true
     sudo fuser -k 8000/tcp 5173/tcp 3000/tcp 2>/dev/null || true
     echo -e "${GREEN}✅ Все сервисы остановлены${NC}"
+}
+
+start_prod() {
+#     echo -e "${BLUE}📦 Сборка web (pnpm build)...${NC}"
+    cd "$PROJECT_ROOT/web"
+#     pnpm build
+
+    echo -e "${BLUE}🚀 Запуск production сервисов...${NC}"
+    sudo systemctl start postgresql
+    sudo systemctl start ulysses-backend
+    sudo systemctl start ulysses-web
+    sudo systemctl start ulysses-bot
+    sudo systemctl start ulysses-monitor
+    sudo systemctl start ulysses-maintenance.timer
+
+    echo -e "${GREEN}✅ Production сервисы запущены${NC}"
+    sleep 2
+    show_status
 }
 
 start_dev() {
@@ -30,7 +46,7 @@ start_dev() {
         echo -e "${YELLOW}⚠️ Backend уже запущен${NC}"
     else
         echo -e "${BLUE}🚀 Запуск backend (uvicorn --reload)...${NC}"
-        (cd backend && ../.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > /tmp/ulysses-backend.log 2>&1 &)
+        (cd backend && PYTHONPATH=.. ../.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > /tmp/ulysses-backend.log 2>&1 &)
         sleep 2
         if sudo lsof -i :8000 >/dev/null 2>&1; then
             echo -e "${GREEN}✅ Backend запущен${NC}"
@@ -74,23 +90,8 @@ start_dev() {
     fi
 }
 
-start_prod() {
-    cd "$PROJECT_ROOT"
-
-    echo -e "${BLUE}📦 Сборка web (pnpm build)...${NC}"
-    (cd web && pnpm build)
-
-    echo -e "${BLUE}🚀 Запуск production сервисов...${NC}"
-    sudo systemctl start postgresql
-    sudo systemctl start ulysses-backend
-    sudo systemctl start ulysses-web
-    sudo systemctl start ulysses-bot
-
-    echo -e "${GREEN}✅ Production сервисы запущены${NC}"
-}
-
 show_status() {
-    SERVICES=("postgresql.service" "ulysses-backend.service" "ulysses-web.service" "ulysses-bot.service")
+    SERVICES=("postgresql.service" "ulysses-backend.service" "ulysses-web.service" "ulysses-bot.service" "ulysses-monitor.service")
     echo "╔════════════════════════════════════════════════════════════╗"
     echo "║        Ulysses Lab - Статус сервисов                      ║"
     echo "╚════════════════════════════════════════════════════════════╝"
@@ -105,10 +106,8 @@ show_status() {
         fi
     done
 
-
     echo ""
     check_port 8000 "Backend API"
-    check_port 5173 "Web Admin (dev)"
     check_port 3000 "Web (prod)"
     check_port 5432 "PostgreSQL"
 }
@@ -125,9 +124,9 @@ check_port() {
 
 # ====================== MAIN ======================
 case "${1}" in
-    --prod)
+    --dev)
         stop_all
-        start_prod
+        start_dev
         ;;
     stop)
         stop_all
@@ -135,12 +134,12 @@ case "${1}" in
     status)
         show_status
         ;;
-    "" | dev)
+    "" | prod | --prod)
         stop_all
-        start_dev
+        start_prod
         ;;
     *)
-        echo "Использование: $0 [--prod|stop|status|dev]"
+        echo "Использование: $0 [--prod|--dev|stop|status]"
         exit 1
         ;;
 esac
