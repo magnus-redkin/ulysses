@@ -4,7 +4,7 @@ LOCALIZATION = {
     "ru": {
         "no_subscription_info": "ℹ️ <b>О сервисе Ulysses VPN</b>\n\n"
                         "Это защищённый персональный туннель для доступа к свободному интернету.\n\n"
-                        "У вас пока нет активной подписки. Выберите тариф, чтобы получить ссылку для подключения.\n\n"
+                        "У вас пока нет активной подписки. Выберите тариф, чтобы получить ссылки (Simple, Advanced) для подключения.\n\n"
                         "👉 <i>Выберите интересующий вас раздел:</i>",
         "status_title": "📊 <b>Статус подписки</b>\n\n",
         "status_active": "🟢 Активна",
@@ -33,7 +33,7 @@ LOCALIZATION = {
     "en": {
         "no_subscription_info": "ℹ️ <b>About Ulysses VPN</b>\n\n"
                         "This is a secure personal tunnel for accessing the free internet.\n\n"
-                        "You don't have an active subscription yet. Choose a plan to get your connection link.\n\n"
+                        "You don't have an active subscription yet. Choose a plan to get your connection links (Simple, Advanced).\n\n"
                         "👉 <i>Select the section you are interested in:</i>",
         "status_title": "📊 <b>Subscription Status</b>\n\n",
         "status_active": "🟢 Active",
@@ -72,8 +72,10 @@ BILLING_LOC = {
         "btn_pay": "🚀 Перейти к оплате",
         "btn_change": "⬅️ Изменить тариф",
         "free_success": "🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN успешно активирован!</b>\n\n"
-                        "🔑 <b>Ваша персональная ссылка подписки:</b>\n"
-                        "<code>{link}</code>\n\n"
+                        "🟢 <b>Simple</b> — для повседневного использования (Telegram, YouTube):\n"
+                        "<code>{simple_link}</code>\n\n"
+                        "🔴 <b>Advanced</b> — если Simple не работает или для игр:\n"
+                        "<code>{advanced_link}</code>\n\n"
                         "⏳ Срок действия: до <b>{exp}</b>\n\n"
                         "📥 <b>Краткая инструкция по подключению:</b>\n"
                         "1. Нажмите на поле со ссылкой выше, чтобы скопировать её.\n"
@@ -92,8 +94,10 @@ BILLING_LOC = {
         "btn_pay": "🚀 Proceed to Payment",
         "btn_change": "⬅️ Change Plan",
         "free_success": "🎉 <b>Your free Ulysses VPN trial has been successfully activated!</b>\n\n"
-                        "🔑 <b>Your personal subscription link:</b>\n"
-                        "<code>{link}</code>\n\n"
+                        "🟢 <b>Simple</b> — everyday use (Telegram, YouTube):\n"
+                        "<code>{simple_link}</code>\n\n"
+                        "🔴 <b>Advanced</b> — fallback or for gaming:\n"
+                        "<code>{advanced_link}</code>\n\n"
                         "⏳ Valid until: <b>{exp}</b>\n\n"
                         "📥 <b>Quick setup guide:</b>\n"
                         "1. Tap on the link field above to copy it.\n"

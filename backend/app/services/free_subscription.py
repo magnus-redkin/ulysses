@@ -76,10 +76,11 @@ async def create_free_subscription(
 
     # 4. Ссылка на агрегатор подписок
     domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-    subscription_link = f"https://{domain}/subscription/{hiddify_uuid}"
+    base = f"https://{domain}/subscription/{hiddify_uuid}"
 
     return {
-        "subscription_link": subscription_link,
+        "simple_link": f"{base}/simple",
+        "advanced_link": f"{base}/advanced",
         "expires_at": expires_at.isoformat(),
         "sub_id": sub_id,
         "success_nodes": len(nodes),

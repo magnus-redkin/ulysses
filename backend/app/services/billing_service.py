@@ -62,6 +62,7 @@ async def create_invoice_logic(
         logger.info(f"DEBUG user from get_or_create_user 2: {user}")
 
         result = await create_free_subscription(db, user)
+
         try:
             to_email = user.get("email")
             if to_email and "@" in to_email and not to_email.endswith(".internal"):
@@ -79,13 +80,15 @@ async def create_invoice_logic(
         return {
             "status": "free_tariff",
             "hiddify_uuid": user["hiddify_uuid"],
-            "subscription_link": result["subscription_link"],
+            "simple_link": result["simple_link"],
+            "advanced_link": result["advanced_link"],
             "expires_at": result["expires_at"],
-            "order_id": None
+            "order_id": None,
         }
 
 
-        # 5. Платный тариф – создаём инвойс и ссылку на оплату
+
+    # 5. Платный тариф – создаём инвойс и ссылку на оплату
     if sub_check["status"] == "requires_payment":
         logger.info(f"💳 Создание инвойса для user_id={user['user_id']}, тариф={tariff_slug}, сумма={amount} {currency}")
 

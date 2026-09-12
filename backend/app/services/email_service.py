@@ -104,9 +104,12 @@ class EmailService:
 
     def get_welcome_email(self, to_email: str, hiddify_uuid: str) -> tuple:
         domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-        subscription_link = f"https://{domain}/subscription/{hiddify_uuid}/#Ulysses"
+        #subscription_link = f"https://{domain}/subscription/{hiddify_uuid}/#Ulysses"
         account_link = f"https://ulysses.best/account/{hiddify_uuid}"
         telegram_bot_link = f"https://t.me/ulysses_vpn_bot?start={hiddify_uuid}"
+        base = f"https://ulysses.best/subscription/{hiddify_uuid}"
+        simple_link = f"{base}/simple"
+        advanced_link = f"{base}/advanced"
 
         subject = "Ulysses Lab — ваш доступ активирован"
 
@@ -117,8 +120,11 @@ class EmailService:
         <p>Здравствуйте!</p>
         <p>Ваш доступ к Ulysses Lab активирован.</p>
 
-        <p>🔗 <strong>Ссылка для подключения:</strong><br>
-        <a href="{subscription_link}">{subscription_link}</a></p>
+        <p>🔗 <strong>Ссылка для подключения Simple:</strong><br>
+        <a href="{simple_link}">{simple_link}</a></p>
+
+        <p>🔗 <strong>Ссылка для подключения Advanced:</strong><br>
+        <a href="{advanced_link}">{advanced_link}</a></p>
 
         <p>📊 <strong>Личный кабинет:</strong><br>
         <a href="{account_link}">{account_link}</a></p>
@@ -139,10 +145,13 @@ class EmailService:
         text_body = f"""\
         Здравствуйте!
 
-        Ваш доступ к Ulysses Lab активирован.
+        Ваш доступ к Ulysses VPN активирован.
 
-        🔗 Ссылка для подключения:
-        {subscription_link}
+        🔗 Simple (для Telegram и YouTube):
+        {simple_link}
+
+        🔗 Advanced (для игр и гиков):
+        {advanced_link}
 
         📊 Личный кабинет:
         {account_link}

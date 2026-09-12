@@ -31,16 +31,17 @@ def format_balance_from_state(balance: dict, lang: str = "ru") -> str:
     # Забираем чистый UUID из ответа сервера
     user_uuid = str(balance.get("hiddify_uuid", "UNKNOWN_UUID")).strip()
 
-    # Безопасная сборка строк БЕЗ использования f-строк
-    # Это гарантирует, что пути /account/ и параметры не исказятся
-    sub_url = "https://ulysses.best/subscription/" + user_uuid + "#Ulysses"
+    simple_url = "https://ulysses.best/subscription/" + user_uuid + "/simple"
+    advanced_url = "https://ulysses.best/subscription/" + user_uuid + "/advanced"
     acc_url = "https://ulysses.best/account/" + user_uuid
     bot_url = "https://t.me/ulysses_vpn_bot?start=" + user_uuid
 
     if lang == "en":
         links_header = (
-            "🔗 <b>Subscription link:</b>\n"
-            "<code>" + sub_url + "</code>\n\n"
+            "🔗 <b>Simple subscription:</b>\n"
+            "<code>" + simple_url + "</code>\n\n"
+            "🔗 <b>Advanced subscription:</b>\n"
+            "<code>" + advanced_url + "</code>\n\n"
             "📊 <b>Personal Account:</b>\n"
             + acc_url + "\n\n"
             "🤖 <b>Telegram Support:</b>\n"
@@ -49,14 +50,17 @@ def format_balance_from_state(balance: dict, lang: str = "ru") -> str:
         )
     else:
         links_header = (
-            "🔗 <b>Ссылка для подключения:</b>\n"
-            "<code>" + sub_url + "</code>\n\n"
+            "🔗 <b>Simple — для повседневного использования:</b>\n"
+            "<code>" + simple_url + "</code>\n\n"
+            "🔗 <b>Advanced — для игр и гиков:</b>\n"
+            "<code>" + advanced_url + "</code>\n\n"
             "📊 <b>Личный кабинет:</b>\n"
             + acc_url + "\n\n"
             "🤖 <b>Поддержка в Telegram:</b>\n"
             + bot_url + "\n\n"
             "───────────────────\n\n"
         )
+
 
     return (
         links_header +
