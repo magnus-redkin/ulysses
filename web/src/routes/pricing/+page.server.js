@@ -1,6 +1,8 @@
 import { fail, redirect, isRedirect } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 
 const BACKEND_URL = process.env.BACKEND_API_URL || 'http://localhost:8000';
+const API_KEY = env.HOST_API_KEY;
 
 /** @type {import('./$types').PageServerLoad} */
 export const load = async ({ fetch }) => {
@@ -45,7 +47,10 @@ export const actions = {
     try {
       const response = await fetch(`${BACKEND_URL}/api/billing/create-invoice`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': env.HOST_API_KEY
+        },
         body: JSON.stringify({ email: String(email), tariff_slug: String(plan) })
       });
 

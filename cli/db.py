@@ -32,35 +32,35 @@ def db():
 db.get_usage = lambda ctx: "uadmin db [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
-@db.command(name="reset")
-@click.confirmation_option(prompt="🚨 Вы уверены, что хотите ПОЛНОСТЬЮ СБРОСИТЬ БАЗУ ДАННЫХ? Все данные пользователей будут удалены!")
-def db_reset():
-    """Полная очистка и переинициализация структуры БД.
+# @db.command(name="reset")
+# @click.confirmation_option(prompt="🚨 Вы уверены, что хотите ПОЛНОСТЬЮ СБРОСИТЬ БАЗУ ДАННЫХ? Все данные пользователей будут удалены!")
+# def db_reset():
+#     """Полная очистка и переинициализация структуры БД.
 
-    Пример: uadmin db reset
-    """
-    console.print("[yellow]⏳ Начинается сброс базы данных...[/yellow]")
+#     Пример: uadmin db reset
+#     """
+#     console.print("[yellow]⏳ Начинается сброс базы данных...[/yellow]")
 
-    script_name = "init_db.sh"
-    script_path = os.path.expanduser(f"~/Ulysses/{script_name}")
+#     script_name = "init_db.sh"
+#     script_path = os.path.expanduser(f"~/Ulysses/{script_name}")
 
-    if not os.path.exists(script_path):
-        console.print(f"[red]❌ Скрипт инициализации не найден по пути: {script_path}[/red]")
-        return
+#     if not os.path.exists(script_path):
+#         console.print(f"[red]❌ Скрипт инициализации не найден по пути: {script_path}[/red]")
+#         return
 
-    try:
-        console.print(f"📦 Запуск {script_name}...")
-        result = subprocess.run(["bash", script_path], check=True, text=True, capture_output=True)
-        console.print(result.stdout)
+#     try:
+#         console.print(f"📦 Запуск {script_name}...")
+#         result = subprocess.run(["bash", script_path], check=True, text=True, capture_output=True)
+#         console.print(result.stdout)
 
-        console.print("⚙️ Перезапуск systemd-сервиса бэкенда...")
-        subprocess.run(["sudo", "systemctl", "restart", "ulysses-backend.service"], check=True)
+#         console.print("⚙️ Перезапуск systemd-сервиса бэкенда...")
+#         subprocess.run(["sudo", "systemctl", "restart", "ulysses-backend.service"], check=True)
 
-        console.print("[green]✅ База данных успешно сброшена и инициализирована заново![/green]")
+#         console.print("[green]✅ База данных успешно сброшена и инициализирована заново![/green]")
 
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]❌ Ошибка при выполнении сброса БД:[/red]")
-        console.print(e.stderr or str(e))
+#     except subprocess.CalledProcessError as e:
+#         console.print(f"[red]❌ Ошибка при выполнении сброса БД:[/red]")
+#         console.print(e.stderr or str(e))
 
 
 @db.command(name="restore")

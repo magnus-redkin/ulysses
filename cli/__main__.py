@@ -12,7 +12,9 @@ from . import stats, notify, check, system_info, db, user
 from .pay import pay as pay_group
 from .monitor import monitor as monitor_group
 from .fix import fix as fix_group
-from .host import host as host_group
+
+from .hosts import hosts
+from .sync import sync
 
 from cli.notify import notify as notify_cmd
 
@@ -42,16 +44,18 @@ cli.add_command(check.check)
 cli.add_command(system_info.system_info, name="system")
 cli.add_command(db.db)
 cli.add_command(user.user)
-# cli.add_command(sub.sub)
-# cli.add_command(vpn.vpn)
+
 cli.add_command(monitor_group)
 cli.add_command(notify_cmd)
 cli.add_command(fix_group)
 
 cli.add_command(pay_group)
-# cli.add_command(brain)
 
-cli.add_command(host_group)
+
+
+cli.add_command(sync)
+cli.add_command(hosts)
+
 
 
 @cli.command(name="help")

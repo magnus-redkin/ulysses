@@ -48,6 +48,7 @@ class EmailService:
         msg["Reply-To"] = "support@ulysses.best"
         msg["Message-ID"] = f"<{uuid.uuid4()}@ulysses.best>"
         msg["Date"] = email_utils.formatdate(localtime=True)
+        msg["X-PM-Message-Stream"] = "outbound"
 
         msg.set_content(html_body, subtype="html")
         if text_body:
@@ -108,8 +109,9 @@ class EmailService:
         account_link = f"https://ulysses.best/account/{hiddify_uuid}"
         telegram_bot_link = f"https://t.me/ulysses_vpn_bot?start={hiddify_uuid}"
         base = f"https://ulysses.best/subscription/{hiddify_uuid}"
-        simple_link = f"{base}/simple"
-        advanced_link = f"{base}/advanced"
+        simple_link = f"{base}/simple#Ulysses-simple"
+        advanced_link = f"{base}/advanced#Ulysses-advanced"
+
 
         subject = "Ulysses Lab — ваш доступ активирован"
 
@@ -132,7 +134,12 @@ class EmailService:
         <p>🤖 <strong>Поддержка в Telegram:</strong><br>
         <a href="{telegram_bot_link}">Написать боту</a></p>
 
-        <p>Инструкция: скопируйте ссылку подключения и вставьте в приложение Hiddify Next.</p>
+        <p>Инструкция:</p>
+        <ol style="padding-left: 20px;">
+        <li>Скопируйте ссылку <b>Simple</b> и добавьте её в Hiddify Next («Добавить профиль» → «Из буфера обмена»).</li>
+        <li>Подключитесь к серверу.</li>
+        <li>Если что-то не работает или нужен минимальный пинг для игр — добавьте вторую ссылку <b>Advanced</b>.</li>
+        </ol>
 
         <p style="color: #888; font-size: 12px; text-align: center;">
         Ulysses Lab<br>
@@ -159,7 +166,10 @@ class EmailService:
         🤖 Поддержка в Telegram:
         {telegram_bot_link}
 
-        Инструкция: скопируйте ссылку и вставьте в Hiddify Next.
+        Инструкция:
+        1. Скопируйте ссылку Simple и добавьте её в Hiddify Next.
+        2. Подключитесь.
+        3. Если что-то не работает — добавьте вторую ссылку Advanced.
         """
         return subject, html_body, text_body
 

@@ -1,14 +1,15 @@
 import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-const API_KEY = env.HOST_API_KEY;
 
+const API_KEY = env.HOST_API_KEY;
 const BACKEND_URL = process.env.BACKEND_API_URL || 'http://localhost:8000';
 
 export async function load({ params, fetch }) {
   const uuid = params.uuid;
-    const response = await fetch(`${BACKEND_URL}/api/user/balance?hiddify_uuid=${uuid}`, {
-        headers: { 'X-API-Key': API_KEY }
-    });
+
+  const response = await fetch(`${BACKEND_URL}/api/user/balance?hiddify_uuid=${uuid}`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
 
   if (!response.ok) {
     if (response.status === 404) throw error(404, `Account not found: ${uuid}`);
@@ -20,18 +21,17 @@ export async function load({ params, fetch }) {
 
   return {
     account: {
-      // Поля из текущего ответа API
       status: data.status,
       email: data.email,
       hiddify_uuid: data.hiddify_uuid,
       traffic: data.traffic,
-      days_left: data.days_left,        // оставшиеся дни (int)
+      days_left: data.days_left,
       is_active: data.is_active,
       tg_user_id: data.tg_user_id,
       tg_username: data.tg_username,
       db_id: data.db_id,
-      // Новые поля (пока могут быть null)
-      subscription_link: data.subscription_link,
+      simple_link: data.simple_link,
+      advanced_link: data.advanced_link,
       expires_at: data.expires_at,
       tariff_name: data.tariff_name
     }

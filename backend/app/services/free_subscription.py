@@ -79,8 +79,8 @@ async def create_free_subscription(
     base = f"https://{domain}/subscription/{hiddify_uuid}"
 
     return {
-        "simple_link": f"{base}/simple",
-        "advanced_link": f"{base}/advanced",
+        "simple_link": f"{base}/simple#Ulysses-simple",
+        "advanced_link": f"{base}/advanced#Ulysses-advanced",
         "expires_at": expires_at.isoformat(),
         "sub_id": sub_id,
         "success_nodes": len(nodes),

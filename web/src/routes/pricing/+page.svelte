@@ -54,7 +54,7 @@
   };
 
   // Умная нормализация, расчет цены в день (в USDT для EN) и мультиязычный перевод
-  let plans = $derived(($page.data?.plans ?? []).map(plan => {
+  let plans = $derived((page.data?.plans ?? []).map(plan => {
     const meta = planMeta[plan.id];
 
     if (!meta) return plan;
@@ -80,8 +80,8 @@
     };
   }));
 
-  let loadError = $derived($page.data?.error ?? null);
-  let isLoaded = $derived($page.data?.plans !== undefined);
+  let loadError = $derived(page.data?.error ?? null);
+  let isLoaded = $derived(page.data?.plans !== undefined);
 
   let selectedPlan = $state('');
   let email = $state('');
@@ -101,7 +101,7 @@
 
   // Гарантированный автовыбор бесплатного тарифа при переходе по ссылке ?plan=free
   $effect(() => {
-    const planParam = $page.url.searchParams.get('plan');
+    const planParam = page.url.searchParams.get('plan');
 
     if (planParam && plans.length > 0) {
       const targetPlan = plans.find(p => {

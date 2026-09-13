@@ -26,7 +26,7 @@ LOCALIZATION = {
         "ticket_error": "⚠️ Сервис техподдержки временно перегружен. Пожалуйста, попробуйте отправить сообщение чуть позже.",
         "lang_changed": "✅ Язык интерфейса успешно изменен на Русский!",
         "choose_lang_title": "🌐 <b>Настройка языка / Language Settings</b>\n\nВыберите удобный язык интерфейса ниже:",
-        "about_text": "ℹ️ <b>О сервисе</b>\n\nНаш сервис предоставляет безопасные удаленные прокси-каналы для ИТ-специалистов, разработчиков и сетевых администраторов.\n\n<b>Назначение сервиса:</b>\n• Безопасное тестирование веб-приложений из различных локаций.\n• Шифрование исходящего интернет-трафика при работе в незащищенных публичных сетях Wi-Fi.\n• Организация защищенных туннелей для удаленного администрирования серверов.\n\n<b>Как это работает:</b>\nПосле аренды доступа вы получаете индивидуальный токен (конфигурационный файл) для подключения к удаленному узлу и краткую техническую инструкцию по установке соединения.",
+        "about_text": "ℹ️ <b>О сервисе:</b>\n\nUlysses VPN — приватный доступ без лишних посредников.\n\n• Не используем Cloudflare и обход белых списков — работаем только на собственной инфраструктуре.\n• Каждому пользователю выдаём две ссылки: Simple (Telegram, YouTube) и Advanced (игры, продвинутые сценарии).\n• Никаких логов активности, только данные, необходимые для биллинга.",
         "rules_text": "📜 <b>Публичная оферта</b>:\nусловия договора на цифровые услуги и цифровые товары «Лаборатория Улисс». Оплата и/или оформление заказа означает акцепт оферты.\n\nПолный текст оферты доступен по адресу: <a href='https://ulysses.best'>https://ulysses.best</a>",
         "support_text": "🆘 <b>Служба технической поддержки</b>\n\nЕсли у вас возникли проблемы с настройкой подключения, оплатой заказа или активацией ключа, наша команда готова вам помочь!\n\n<b>Контакты для связи:</b>\n• Наш официальный канал поддержки - здесь.\n• Время работы: ежедневно с 09:00 до 21:00 (по МСК).\n\n<b>Важная информация по платежам:</b>\nЕсли ваш платёж через систему оплаты прошёл, но баланс или доступ в боте не обновился в течение 10 минут, пожалуйста, пришлите в чат поддержки <i>снимок экрана (скриншот) квитанции об оплате</i> или ID транзакции из истории платежей. Мы активируем ваш доступ вручную."
     },
@@ -55,7 +55,7 @@ LOCALIZATION = {
         "ticket_error": "⚠️ The technical support service is temporarily overloaded. Please try sending your message a bit later.",
         "lang_changed": "✅ Interface language has been changed to English!",
         "choose_lang_title": "🌐 <b>Language Settings / Настройка языка</b>\n\nSelect your preferred interface language below:",
-        "about_text": "ℹ️ <b>About Service</b>\n\nOur service provides secure remote proxy channels for IT specialists, developers, and network administrators.\n\n<b>Service Purpose:</b>\n• Secure testing of web applications from various locations.\n• Encryption of outbound internet traffic when working in unsecured public Wi-Fi networks.\n• Organization of secure tunnels for remote server administration.\n\n<b>How it works:</b>\nAfter renting access, you will receive an individual token (configuration file) to connect to a remote node and brief technical instructions for establishing a connection.",
+        "about_text": "ℹ️ <b>About Service:</b>\n\nUlysses VPN — private access without middlemen..\n\n• No Cloudflare, no white-list bypass — we run on our own infrastructure.\n• Every user gets two links: Simple (Telegram, YouTube) and Advanced (gaming, advanced scenarios). \n• No activity logs; we only store data required for billing.",
         "rules_text": "📜 <b>Public Offer</b>:\nTerms of service for digital services and digital goods of 'Ulysses Lab'. Payment and/or placing an order implies acceptance of the offer.\n\nFull text is available here: <a href='https://ulysses.best'>https://ulysses.best</a>",
         "support_text": "🆘 <b>Technical Support Service</b>\n\nIf you encounter any problems with configuring the connection, payment, or key activation, our team is ready to help!\n\n<b>Contacts:</b>\n• Our official support channel is here.\n• Working hours: daily from 09:00 to 21:00 (MSK).\n\n<b>Important Payment Information:</b>\nIf your payment went through, but the balance or access in the bot has not updated within 10 minutes, please send a <i>screenshot of the payment receipt</i> or the transaction ID to the support chat. We will activate your access manually."
     }
@@ -76,6 +76,7 @@ BILLING_LOC = {
                         "<code>{simple_link}</code>\n\n"
                         "🔴 <b>Advanced</b> — если Simple не работает или для игр:\n"
                         "<code>{advanced_link}</code>\n\n"
+                        "💡 Tip: начните с Simple. Если медленно или не работает, попробуйте Advanced.\n\n"
                         "⏳ Срок действия: до <b>{exp}</b>\n\n"
                         "📥 <b>Краткая инструкция по подключению:</b>\n"
                         "1. Нажмите на поле со ссылкой выше, чтобы скопировать её.\n"
@@ -98,6 +99,7 @@ BILLING_LOC = {
                         "<code>{simple_link}</code>\n\n"
                         "🔴 <b>Advanced</b> — fallback or for gaming:\n"
                         "<code>{advanced_link}</code>\n\n"
+                        "💡 Tip: start with Simple. If anything is slow or blocked, try Advanced.\n\n"
                         "⏳ Valid until: <b>{exp}</b>\n\n"
                         "📥 <b>Quick setup guide:</b>\n"
                         "1. Tap on the link field above to copy it.\n"
