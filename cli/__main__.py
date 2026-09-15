@@ -17,6 +17,7 @@ from .hosts import hosts
 from .sync import sync
 
 from cli.notify import notify as notify_cmd
+from .help import help_cmd
 
 # Подавляем избыточные логи SQLAlchemy, сохраняя чистоту терминала
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
@@ -56,31 +57,7 @@ cli.add_command(pay_group)
 cli.add_command(sync)
 cli.add_command(hosts)
 
-
-
-@cli.command(name="help")
-def help_all():
-    """Показать подробную справку по всем командам uadmin."""
-    ctx = click.get_current_context()
-    root_cmd = ctx.find_root().command
-
-    def _print_help(cmd, prefix=""):
-        """Рекурсивно печатает help для команды/группы."""
-        full_name = f"{prefix} {cmd.name}".strip()
-        if isinstance(cmd, click.Group):
-            # Справка самой группы
-            click.echo(f"\n{'='*60}")
-            click.echo(f"COMMAND: {full_name}")
-            click.echo(cmd.get_help(click.Context(cmd, info_name=full_name)))
-            # Рекурсивно для всех подкоманд
-            for sub_cmd in cmd.commands.values():
-                _print_help(sub_cmd, full_name)
-        else:
-            click.echo(f"\n{'='*60}")
-            click.echo(f"COMMAND: {full_name}")
-            click.echo(cmd.get_help(click.Context(cmd, info_name=full_name)))
-
-    _print_help(root_cmd)
+cli.add_command(help_cmd)
 
 
 

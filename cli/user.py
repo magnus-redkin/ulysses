@@ -35,6 +35,7 @@ user.get_usage = lambda ctx: "uadmin user [ОПЦИИ] КОМАНДА [ARGS]..."
 @click.option("--username", type=str, required=True)
 @async_cmd
 async def user_create(tg_id, username):
+    """Создать пользователя и активировать ему бесплатный тариф sub_free."""
     clean_username = username.lstrip("@").strip()
     console.print(f"[yellow]⏳ Создание пользователя для TG ID {tg_id}...[/yellow]")
 
@@ -65,6 +66,7 @@ async def user_create(tg_id, username):
 @user.command(name="list")
 @async_cmd
 async def user_list():
+    """Показать список всех пользователей биллинга."""
     async with AsyncSessionLocal() as session:
         res = await session.execute(
             text("SELECT id, tg_user_id, tg_username, email, hiddify_uuid, created_at FROM users ORDER BY id ASC")
@@ -96,6 +98,7 @@ async def user_list():
 @click.argument("identifier")
 @async_cmd
 async def user_delete(identifier):
+    """Удалить пользователя из БД и со всех HFM-нод."""
     async with AsyncSessionLocal() as session:
         console.print(f"[yellow]⏳ Поиск пользователя '{identifier}'...[/yellow]")
         row = await find_user_by_identifier(session, identifier)
@@ -142,6 +145,7 @@ async def user_delete(identifier):
 @click.argument("identifier")
 @async_cmd
 async def user_link(identifier):
+    """Показать ссылку подписки пользователя."""
     async with AsyncSessionLocal() as session:
         row = await find_user_by_identifier(session, identifier)
         if not row:
@@ -170,6 +174,7 @@ async def user_link(identifier):
 @click.argument("identifier")
 @async_cmd
 async def user_json(identifier):
+    """Сгенерировать объединённый sing-box JSON со всех нод для пользователя."""
     async with AsyncSessionLocal() as session:
         row = await find_user_by_identifier(session, identifier)
         if not row:
@@ -221,8 +226,16 @@ async def user_json(identifier):
 
 @user.command(name="sub")
 @click.argument("identifier")
+@click.option("--history", is_flag=True, help="Показать историю подписок и платежей.")
+@click.option("--all", "show_all", is_flag=True, help="Без лимита (подразумевает --history).")
+@click.option("--limit", default=20, type=int, help="Лимит записей истории (по умолчанию 20).")
 @async_cmd
-async def user_subscription_status(identifier):
+async def user_subscription_status(identifier, history, show_all, limit):
+    """Подписки и платежи пользователя. С --history — история, с --all — без лимита."""
+    if show_all:
+        history = True
+        limit = None
+
     async with AsyncSessionLocal() as session:
         console.print(f"[yellow]⏳ Поиск подписок для '{identifier}'...[/yellow]")
         row = await find_user_by_identifier(session, identifier)
@@ -233,6 +246,7 @@ async def user_subscription_status(identifier):
         tg_username, tg_user_id, hiddify_uuid, db_id = row
         hiddify_uuid_str = str(hiddify_uuid).strip() if hiddify_uuid else ""
 
+        # Проверка на нодах (как было)
         if hiddify_uuid_str and hiddify_uuid_str not in ("None", "-"):
             from app.services.node_manager import node_manager
             nodes = node_manager.get_hfm_nodes()
@@ -253,15 +267,7 @@ async def user_subscription_status(identifier):
         else:
             hfm_status_str = "[red]Нет UUID[/red]"
 
-        sql_subs = """
-            SELECT id, tariff_slug, status, node_id, starts_at, expires_at, provisioning_attempts, provisioning_error
-            FROM subscriptions
-            WHERE user_id = :uid
-            ORDER BY expires_at DESC NULLS FIRST, id DESC
-        """
-        res_subs = await session.execute(text(sql_subs), {"uid": db_id})
-        subscriptions = res_subs.fetchall()
-
+        # --- Основной профиль ---
         console.print(f"\n👤 Профиль ID {db_id}")
         if tg_username:
             console.print(f"   • Telegram: @{tg_username} (ID: {tg_user_id})")
@@ -270,38 +276,170 @@ async def user_subscription_status(identifier):
         console.print(f"   • UUID: [yellow]{hiddify_uuid_str}[/yellow]")
         console.print(f"   • Статус на Ноде: {hfm_status_str}\n")
 
+        # --- Активная подписка (как было) ---
+        sql_active = """
+            SELECT id, tariff_slug, status, node_id, starts_at, expires_at,
+                   provisioning_attempts, provisioning_error
+            FROM subscriptions
+            WHERE user_id = :uid AND status = 'active'
+            ORDER BY expires_at DESC NULLS FIRST, id DESC
+        """
+        res_subs = await session.execute(text(sql_active), {"uid": db_id})
+        subscriptions = res_subs.fetchall()
+
         if not subscriptions:
-            console.print("[yellow]ℹ️ Нет подписок[/yellow]")
+            console.print("[yellow]ℹ️ Активных подписок нет[/yellow]")
+        else:
+            table = Table(title=f"📅 Активные подписки ({len(subscriptions)})")
+            table.add_column("Sub ID", style="dim")
+            table.add_column("Тариф", style="blue")
+            table.add_column("Статус")
+            table.add_column("Нода", style="magenta")
+            table.add_column("Начало", justify="center")
+            table.add_column("Истекает", justify="center")
+            table.add_column("Ошибки", style="red")
+
+            for sub in subscriptions:
+                sub_id, tariff_slug, status, node_id, starts_at, expires_at, attempts, error = sub
+                status_formatted = {
+                    "active": "[green]🟢 active[/green]",
+                    "provisioning": "[yellow]⏳ provisioning[/yellow]",
+                    "expired": "[red]🔴 expired[/red]",
+                    "cancelled": "[dim]⚪ cancelled[/dim]"
+                }.get(status, f"[italic]{status}[/italic]")
+
+                starts_str = starts_at.strftime("%Y-%m-%d %H:%M") if starts_at else "-"
+                expires_str = expires_at.strftime("%Y-%m-%d %H:%M") if expires_at else "[blue]Infinity[/blue]"
+                if status == "active" and expires_at and expires_at < datetime.now(timezone.utc):
+                    status_formatted = "[red]🚨 active (ПРОТУХЛА)[/red]"
+
+                error_info = "-"
+                if error or attempts:
+                    error_info = f"[{attempts} поп.] {error[:25] if error else 'API error'}"
+
+                table.add_row(str(sub_id), tariff_slug, status_formatted, node_id, starts_str, expires_str, error_info)
+
+            console.print(table)
+
+        # --- История ---
+        if not history:
+            console.print("")
             return
 
-        table = Table(title=f"📅 Подписки ({len(subscriptions)})")
-        table.add_column("Sub ID", style="dim")
-        table.add_column("Тариф", style="blue")
-        table.add_column("Статус")
-        table.add_column("Нода", style="magenta")
-        table.add_column("Начало", justify="center")
-        table.add_column("Истекает", justify="center")
-        table.add_column("Ошибки", style="red")
+        limit_sql = "" if limit is None else f"LIMIT {int(limit)}"
 
-        for sub in subscriptions:
-            sub_id, tariff_slug, status, node_id, starts_at, expires_at, attempts, error = sub
-            status_formatted = {
-                "active": "[green]🟢 active[/green]",
-                "provisioning": "[yellow]⏳ provisioning[/yellow]",
-                "expired": "[red]🔴 expired[/red]",
-                "cancelled": "[dim]⚪ cancelled[/dim]"
-            }.get(status, f"[italic]{status}[/italic]")
+        # Все подписки (включая активные)
+        sql_all_subs = f"""
+            SELECT id, tariff_slug, status, node_id, starts_at, expires_at,
+                   provisioning_attempts, provisioning_error
+            FROM subscriptions
+            WHERE user_id = :uid
+            ORDER BY created_at DESC NULLS LAST, id DESC
+            {limit_sql}
+        """
+        all_subs = (await session.execute(text(sql_all_subs), {"uid": db_id})).fetchall()
 
-            starts_str = starts_at.strftime("%Y-%m-%d %H:%M") if starts_at else "-"
-            expires_str = expires_at.strftime("%Y-%m-%d %H:%M") if expires_at else "[blue]Infinity[/blue]"
-            if status == "active" and expires_at and expires_at < datetime.now(timezone.utc):
-                status_formatted = "[red]🚨 active (ПРОТУХЛА)[/red]"
+        console.print(f"\n📅 История подписок ({len(all_subs)}):")
+        if all_subs:
+            t_subs = Table()
+            t_subs.add_column("Sub ID", style="dim")
+            t_subs.add_column("Тариф", style="blue")
+            t_subs.add_column("Статус")
+            t_subs.add_column("Нода", style="magenta")
+            t_subs.add_column("Начало", justify="center")
+            t_subs.add_column("Истекает", justify="center")
 
-            error_info = "-"
-            if error or attempts:
-                error_info = f"[{attempts} поп.] {error[:25] if error else 'API error'}"
+            for sub in all_subs:
+                sub_id, tariff_slug, status, node_id, starts_at, expires_at, _, _ = sub
+                status_formatted = {
+                    "active": "[green]🟢 active[/green]",
+                    "provisioning": "[yellow]⏳ provisioning[/yellow]",
+                    "provisioning_failed": "[red]❌ provisioning_failed[/red]",
+                    "expired": "[red]🔴 expired[/red]",
+                    "cancelled": "[dim]⚪ cancelled[/dim]",
+                }.get(status, f"[italic]{status}[/italic]")
 
-            table.add_row(str(sub_id), tariff_slug, status_formatted, node_id, starts_str, expires_str, error_info)
+                starts_str = starts_at.strftime("%Y-%m-%d %H:%M") if starts_at else "-"
+                expires_str = expires_at.strftime("%Y-%m-%d %H:%M") if expires_at else "—"
+                t_subs.add_row(
+                    str(sub_id), tariff_slug, status_formatted, node_id or "-",
+                    starts_str, expires_str,
+                )
+            console.print(t_subs)
+        else:
+            console.print("[dim](пусто)[/dim]")
 
-        console.print(table)
+        # Все платежи
+        sql_pays = f"""
+            SELECT id, status, amount, currency, tariff_slug, created_at
+            FROM payment_attempts
+            WHERE user_id = :uid
+            ORDER BY created_at DESC NULLS LAST
+            {limit_sql}
+        """
+        all_pays = (await session.execute(text(sql_pays), {"uid": db_id})).fetchall()
+
+        console.print(f"\n💳 История платежей ({len(all_pays)}):")
+        if all_pays:
+            t_pays = Table()
+            t_pays.add_column("ID (short)", style="dim")
+            t_pays.add_column("Статус")
+            t_pays.add_column("Оплачено", justify="right")
+            t_pays.add_column("Тариф", style="blue")
+            t_pays.add_column("Создан", justify="center")
+
+            for p in all_pays:
+                pid, st, amt, cur, slug, created = p
+                st_color = {
+                    "success": "[green]success[/green]",
+                    "pending": "[yellow]pending[/yellow]",
+                    "processing": "[cyan]processing[/cyan]",
+                    "cancelled": "[dim]cancelled[/dim]",
+                    "failed": "[red]failed[/red]",
+                }.get(st, f"[italic]{st}[/italic]")
+
+                t_pays.add_row(
+                    str(pid)[:8],
+                    st_color,
+                    f"{amt:.2f} {cur}",
+                    slug,
+                    created.strftime("%Y-%m-%d %H:%M") if created else "-",
+                )
+            console.print(t_pays)
+            console.print(
+                "\n[dim]ℹ️ Детали конкретного платежа: "
+                "uadmin pay show <полный-uuid>[/dim]"
+            )
+        else:
+            console.print("[dim](пусто)[/dim]")
+
         console.print("")
+
+@user.command(name="rf-sync")
+@async_cmd
+async def user_rf_sync():
+    """Полный ре-синк UUID: все активные подписки → RF-нода."""
+    from app.services.rf_node_client import sync_users
+    from app.config import settings
+
+    if not getattr(settings, "RF_NODE_ENABLED", False):
+        console.print("[yellow]⚠️ RF_NODE_ENABLED=false, синк пропущен[/yellow]")
+        return
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(text("""
+            SELECT DISTINCT u.hiddify_uuid
+            FROM subscriptions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.status = 'active'
+              AND s.expires_at > NOW()
+              AND u.hiddify_uuid IS NOT NULL
+        """))
+        uuids = [str(row[0]) for row in res.fetchall()]
+
+    console.print(f"[yellow]⏳ Синхронизация {len(uuids)} UUID → RF-нода...[/yellow]")
+    ok = await sync_users(uuids)
+    if ok:
+        console.print(f"[green]✅ Синхронизировано: {len(uuids)} UUID[/green]")
+    else:
+        console.print("[red]❌ Не удалось синхронизировать (см. логи)[/red]")

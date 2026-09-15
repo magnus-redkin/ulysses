@@ -13,29 +13,55 @@ PROJECT_ROOT="$SCRIPT_DIR"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
+
+wait_for_port() {
+    local port=$1
+    local timeout=${2:-15}
+    local start_time=$(date +%s)
+    while ! nc -z 127.0.0.1 "$port" 2>/dev/null; do
+        if (( $(date +%s) - start_time > timeout )); then
+            return 1
+        fi
+        sleep 0.5
+    done
+    return 0
+}
+
 stop_all() {
     echo -e "${YELLOW}⏹ Остановка всех сервисов...${NC}"
     sudo systemctl stop ulysses-backend ulysses-bot ulysses-web ulysses-monitor 2>/dev/null || true
+
+    # Убить dev-процессы, если запущены вручную
+    sudo pkill -f "uvicorn backend.app.main" 2>/dev/null || true
+    sudo pkill -f "bot/main.py" 2>/dev/null || true
+    sudo pkill -f "vite dev" 2>/dev/null || true
+
+    # Освободить порты
     sudo fuser -k 8000/tcp 5173/tcp 3000/tcp 2>/dev/null || true
+
     echo -e "${GREEN}✅ Все сервисы остановлены${NC}"
 }
 
 start_prod() {
-#     echo -e "${BLUE}📦 Сборка web (pnpm build)...${NC}"
-    cd "$PROJECT_ROOT/web"
-#     pnpm build
-
-    echo -e "${BLUE}🚀 Запуск production сервисов...${NC}"
+    cd "$PROJECT_ROOT"
+    echo -e "${BLUE}🚀 Запуск production сервисов (без сборки)...${NC}"
     sudo systemctl start postgresql
     sudo systemctl start ulysses-backend
     sudo systemctl start ulysses-web
     sudo systemctl start ulysses-bot
     sudo systemctl start ulysses-monitor
     sudo systemctl start ulysses-maintenance.timer
-
     echo -e "${GREEN}✅ Production сервисы запущены${NC}"
-    sleep 2
+    wait_for_port 8000 15
+    wait_for_port 3000 15
     show_status
+}
+
+start_prod_build() {
+    cd "$PROJECT_ROOT"
+    echo -e "${BLUE}📦 Сборка web (pnpm build)...${NC}"
+    (cd web && pnpm build)
+    start_prod
 }
 
 start_dev() {
@@ -91,7 +117,13 @@ start_dev() {
 }
 
 show_status() {
-    SERVICES=("postgresql.service" "ulysses-backend.service" "ulysses-web.service" "ulysses-bot.service" "ulysses-monitor.service")
+    SERVICES=(
+        "postgresql.service"
+        "ulysses-backend.service"
+        "ulysses-web.service"
+        "ulysses-bot.service"
+        "ulysses-monitor.service"
+    )
     echo "╔════════════════════════════════════════════════════════════╗"
     echo "║        Ulysses Lab - Статус сервисов                      ║"
     echo "╚════════════════════════════════════════════════════════════╝"
@@ -106,9 +138,17 @@ show_status() {
         fi
     done
 
+    # Таймер поддержки
+    if systemctl is-active --quiet "ulysses-maintenance.timer" 2>/dev/null; then
+        echo -e "${GREEN}●${NC} ulysses-maintenance.timer ${GREEN}✅ Активен${NC}"
+    else
+        echo -e "${RED}●${NC} ulysses-maintenance.timer ${RED}❌ Остановлен${NC}"
+    fi
+
     echo ""
     check_port 8000 "Backend API"
     check_port 3000 "Web (prod)"
+    check_port 5173 "Web (dev)"
     check_port 5432 "PostgreSQL"
 }
 
@@ -123,6 +163,7 @@ check_port() {
 }
 
 # ====================== MAIN ======================
+
 case "${1}" in
     --dev)
         stop_all
@@ -134,12 +175,16 @@ case "${1}" in
     status)
         show_status
         ;;
+    build)
+        stop_all
+        start_prod_build
+        ;;
     "" | prod | --prod)
         stop_all
         start_prod
         ;;
     *)
-        echo "Использование: $0 [--prod|--dev|stop|status]"
+        echo "Использование: $0 [--prod|--dev|build|stop|status]"
         exit 1
         ;;
 esac

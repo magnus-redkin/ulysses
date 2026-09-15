@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.services.hiddify_client import HiddifyProvisioner
 from app.services.node_manager import node_manager
+from app.services.subscription_links import build_subscription_links
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +75,15 @@ async def create_free_subscription(
 
     logger.info(f"✅ [FREE SUB] sub_free активирован для {email or user_id}")
 
-    # 4. Ссылка на агрегатор подписок
-    domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-    base = f"https://{domain}/subscription/{hiddify_uuid}"
+    # 3.5. Пуш UUID на RF-ноду (best-effort, не ломает активацию)
+    from app.services.rf_node_client import add_user as rf_add_user
+    await rf_add_user(str(hiddify_uuid))
 
+    # 4. Ссылка на агрегатор подписок
+    links = build_subscription_links(hiddify_uuid)
     return {
-        "simple_link": f"{base}/simple#Ulysses-simple",
-        "advanced_link": f"{base}/advanced#Ulysses-advanced",
+        "simple_link": links["simple_link"],
+        "advanced_link": links["advanced_link"],
         "expires_at": expires_at.isoformat(),
         "sub_id": sub_id,
         "success_nodes": len(nodes),

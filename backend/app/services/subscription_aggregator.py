@@ -3,7 +3,9 @@ import logging
 from typing import Dict, List, Optional
 import httpx
 
+from app.config import settings
 from app.services.node_manager import node_manager
+from app.services.rf_node_config import build_rf_outbound
 
 logger = logging.getLogger(__name__)
 
@@ -161,32 +163,75 @@ def _build_config(
         selector,
         urltest,
         {"type": "direct", "tag": "direct"},
-        {"type": "block", "tag": "block"},
-        {"type": "dns", "tag": "dns-out"},
         *final_outbounds,
     ]
 
     route = {
         "auto_detect_interface": True,
-        "override_android_vpn": True,
         "final": "proxy",
-        "rule_set": [],
-        "rules": [],
+            "default_domain_resolver": {
+            "server": "google"
+        },
+        "rules": [
+            {"action": "sniff"},
+            {"protocol": "dns", "action": "hijack-dns"},
+        ],
     }
+
     dns = {
         "servers": [
-            {"address": "tcp://1.1.1.1", "address_resolver": "dns-local", "strategy": "prefer_ipv4", "tag": "dns-remote", "detour": "proxy"},
-            {"address": "8.8.8.8", "detour": "direct", "tag": "dns-local"},
-            {"address": "rcode://success", "tag": "dns-block"},
+            {
+                "type": "tls",
+                "tag": "cf-tls",
+                "server": "1.1.1.1",
+                "detour": "proxy",
+            },
+            {
+                "type": "udp",
+                "tag": "google",
+                "server": "8.8.8.8",
+                "detour": "direct",
+            },
         ],
-        "rules": [],
-        "final": "dns-local",
-        "reverse_mapping": True,
-        "strategy": "prefer_ipv4",
-        "independent_cache": True,
+        "final": "google",
     }
 
     return {"outbounds": outbounds, "route": route, "dns": dns}
+
+
+def _inject_rf_node(config: dict, hiddify_uuid: str) -> dict:
+    """
+    Добавляет RF outbound в готовый конфиг:
+      • в `outbounds` — всегда;
+      • в selector `proxy` — да (чтобы выбрать вручную);
+      • в urltest `Auto` — НЕТ (не участвует в speedtest).
+    """
+    if not config:
+        return config
+
+    rf = build_rf_outbound(hiddify_uuid)
+    if not rf:
+        return config
+
+    outbounds = config.get("outbounds", [])
+    rf_tag = rf["tag"]
+
+    # Защита от повторного добавления
+    if any(ob.get("tag") == rf_tag for ob in outbounds):
+        return config
+
+    for ob in outbounds:
+        if ob.get("type") == "selector" and ob.get("tag") == "proxy":
+            ob.setdefault("outbounds", [])
+            if rf_tag not in ob["outbounds"]:
+                ob["outbounds"].append(rf_tag)
+        # urltest "Auto" — намеренно НЕ трогаем
+
+    outbounds.append(rf)
+    config["outbounds"] = outbounds
+
+    logger.info(f"🇷🇺 [RF-NODE] outbound добавлен с тегом '{rf_tag}'")
+    return config
 
 
 async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:
@@ -210,6 +255,11 @@ async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:
 
     simple = _build_config(configs, nodes, "simple")
     advanced = _build_config(configs, nodes, "advanced")
+
+    # 🇷🇺 Встраиваем RF-ноду (в оба режима, но без Auto)
+    simple = _inject_rf_node(simple, hiddify_uuid)
+    advanced = _inject_rf_node(advanced, hiddify_uuid)
+
 
     if not simple and not advanced:
         logger.error("❌ Не удалось собрать ни один конфиг")

@@ -70,10 +70,29 @@ class Settings(BaseSettings):
     PLATEGA_MERCHANT_ID: str = ""
     PLATEGA_API: str = ""
 
+    # тестовое ограничение Magnus
+    PLATEGA_TEST_MODE: bool = False
+    PLATEGA_TEST_AMOUNT: int = 10          # сумма, которая реально уйдёт в Platega
+    # Через запятую TG ID, для которых подменяем. Пусто = для всех.
+    PLATEGA_TEST_TG_IDS: str = "8724831968"
+
     # VPN / Reality
     DECOY_SITE: str = ""
     HOST_API_KEY: str = ""
     HIDDIFY_DOMAIN: str = "ulysses.best"
+
+
+    # --- RF-нода (российский exit) ---
+    RF_NODE_ENABLED: bool = False
+    RF_NODE_HOST: str = "ru.ulysses.best"
+    RF_NODE_PORT: int = 443
+    RF_NODE_PUBLIC_KEY: str = ""
+    RF_NODE_SHORT_ID: str = ""
+    RF_NODE_SNI: str = "dzen.ru"
+    RF_NODE_FLOW: str = "xtls-rprx-vision"
+    RF_NODE_API_URL: str = ""
+    RF_NODE_API_TOKEN: str = ""
+    RF_NODE_TAG: str = "🇷🇺 RU"
 
     @property
     def DATABASE_URL(self) -> str:

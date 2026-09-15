@@ -7,6 +7,7 @@ from bot.config import logger, BACKEND_API_URL, HOST_API_KEY
 # Временное инмемори-хранилище для имитации бэкенда до обновления СУБД
 _LANG_MOCK_DB = {}
 
+
 async def api_call(method: str, url: str, api_key: str = None, **kwargs) -> dict | None:
     """Централизованный обертчик для безопасных HTTP-запросов к вашему API."""
     try:
@@ -33,6 +34,40 @@ async def api_call(method: str, url: str, api_key: str = None, **kwargs) -> dict
         logger.error(f"Network transport fault during API call: {e}")
     return None
 
+
+async def render_screen(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup=None,
+    parse_mode: str = "HTML",
+    **kwargs,
+) -> Message | None:
+    """
+    Удаляет сообщение, из которого пришёл callback (вместе с его кнопками),
+    и отправляет новое сообщение внизу чата.
+
+    Благодаря этому:
+      • каждое новое меню всегда оказывается внизу чата;
+      • служебные пуши (например, 'Оплата получена' от backend) уходят наверх,
+        как только пользователь делает следующее действие.
+    """
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось удалить сообщение {callback.message.message_id}: {e}")
+
+    try:
+        return await callback.message.answer(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            **kwargs,
+        )
+    except Exception as e:
+        logger.error(f"❌ render_screen: ошибка отправки нового сообщения: {e}")
+        return None
+
+
 async def get_user_lang(event: Message | CallbackQuery) -> str:
     """
     Определяет язык пользователя.
@@ -41,11 +76,9 @@ async def get_user_lang(event: Message | CallbackQuery) -> str:
     """
     tg_user_id = event.from_user.id
 
-    # Имитация запроса к бэкенду (в будущем: data.get("tg_lang"))
     if tg_user_id in _LANG_MOCK_DB:
         return _LANG_MOCK_DB[tg_user_id]
 
-    # Автоопределение на основе данных телеграма
     try:
         lang_code = event.from_user.language_code
         if lang_code and lang_code.lower().startswith("ru"):
@@ -55,15 +88,7 @@ async def get_user_lang(event: Message | CallbackQuery) -> str:
 
     return "en"
 
+
 async def set_user_lang(tg_user_id: int, lang: str) -> bool:
-    """
-    Сохраняет выбранный пользователем язык на бэкенд.
-    Пока бэкенд не обновлен, пишет в локальную заглушку.
-    """
     _LANG_MOCK_DB[tg_user_id] = lang
-
-    # Имитация будущего корректного запроса к СУБД:
-    # payload = {"tg_user_id": tg_user_id, "tg_lang": lang}
-    # await api_call("POST", f"{BACKEND_API_URL}/api/bot/set-lang", api_key=HOST_API_KEY, json=payload)
-
     return True

@@ -68,7 +68,8 @@
     }
 
     // Живая реактивная переменная для списка тикетов
-    let liveTickets = $state(data.tickets || []);
+  // let liveTickets = $state(data.tickets || []);
+  let liveTickets = $state([]);
 
     $effect(() => {
         if (data.tickets) {

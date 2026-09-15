@@ -8,6 +8,7 @@ from app.config import settings
 import logging
 logger = logging.getLogger(__name__)
 
+
 class PlategaPaymentService:
     """Провайдер Platega – прямой HTTP без SDK, создаёт универсальную ссылку."""
 
@@ -15,6 +16,31 @@ class PlategaPaymentService:
         self.merchant_id = settings.PLATEGA_MERCHANT_ID
         self.secret = settings.PLATEGA_API
         self.api_url = "https://app.platega.io/v2/transaction/process"
+
+    # ------------------------------------------------------------------
+    # 🧪 ВРЕМЕННЫЙ ТЕСТОВЫЙ РЕЖИМ
+    # Включается переменной окружения PLATEGA_TEST_MODE=1.
+    # Сумма подменяется на PLATEGA_TEST_AMOUNT (рубли) для TG ID из
+    # PLATEGA_TEST_TG_IDS (через запятую). Пусто = для всех.
+    # После тестов поставить PLATEGA_TEST_MODE=0 и перезапустить сервисы.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def apply_test_amount(amount: float, tg_id: Optional[int] = None) -> float:
+        if not getattr(settings, "PLATEGA_TEST_MODE", False):
+            return amount
+
+        raw = (getattr(settings, "PLATEGA_TEST_TG_IDS", "") or "").strip()
+        if raw:
+            allowed = {int(x) for x in raw.split(",") if x.strip().isdigit()}
+            if tg_id not in allowed:
+                return amount
+
+        test_amount = float(getattr(settings, "PLATEGA_TEST_AMOUNT", 10))
+        logger.warning(
+            "🧪 [PLATEGA TEST] amount %.2f -> %.2f (tg_id=%s)",
+            amount, test_amount, tg_id,
+        )
+        return test_amount
 
     async def create_invoice_link(
         self,
@@ -29,6 +55,9 @@ class PlategaPaymentService:
         Генерирует платёжную ссылку БЕЗ paymentMethod.
         Плательщик на стороне Platega сам выберет способ оплаты.
         """
+        # 🧪 страховка на случай прямых вызовов (CLI, тесты, бот)
+        amount = self.apply_test_amount(amount, tg_id=user_telegram_id)
+
         base_domain = "ulysses.best"
         final_currency = str(currency).upper().strip() if currency else "RUB"
 

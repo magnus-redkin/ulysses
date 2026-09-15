@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from bot.config import BACKEND_API_URL, WEB_API_URL, HOST_API_KEY, logger
 from bot.keyboards import KEYBOARDS
-from bot.utils import api_call, get_user_lang, set_user_lang
+from bot.utils import api_call, get_user_lang, set_user_lang, render_screen
 
 from bot.localization import LOCALIZATION
 
@@ -144,32 +144,22 @@ async def show_user_balance(event):
     raw_balance = await api_call("GET", target_url, api_key=HOST_API_KEY)
 
     if not raw_balance or raw_balance.get("is_active") is False:
-        # Пользователь без активной подписки
         text = LOCALIZATION[lang]["no_subscription_info"]
-        reply_kb = KEYBOARDS["menu"](lang=lang)  # или back
+        reply_kb = KEYBOARDS["menu"](lang=lang)
         if is_callback:
-            try:
-                await message_obj.edit_text(text=text, reply_markup=reply_kb, parse_mode="HTML")
-            except Exception:
-                pass
+            await render_screen(event, text=text, reply_markup=reply_kb)
             await event.answer()
         else:
             await message_obj.answer(text=text, reply_markup=reply_kb, parse_mode="HTML")
         return
 
-    # Если подписка активна – показываем полный баланс
     balance_text = format_balance_from_state(raw_balance, lang=lang)
 
     if is_callback:
-        try:
-            await message_obj.edit_text(text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
-        except Exception:
-            await event.answer()
+        await render_screen(event, text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang))
         await event.answer()
     else:
         await message_obj.answer(text=balance_text, reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
-
-###
 
 
 @router.callback_query(F.data.startswith("set_lang:"))
@@ -180,14 +170,15 @@ async def process_language_switch(callback_query: CallbackQuery):
     await callback_query.answer(LOCALIZATION[new_lang]["lang_changed"])
 
     welcome_text = LOCALIZATION[new_lang]["welcome"].format(name=callback_query.from_user.first_name)
-    await callback_query.message.edit_text(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=new_lang), parse_mode="HTML")
+    await render_screen(callback_query, text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=new_lang))
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: CallbackQuery):
     lang = await get_user_lang(callback_query)
     welcome_text = LOCALIZATION[lang]["welcome"].format(name=callback_query.from_user.first_name)
-    await callback_query.message.edit_text(text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=lang), parse_mode="HTML")
+    await render_screen(callback_query, text=welcome_text, reply_markup=KEYBOARDS["menu"](lang=lang))
     await callback_query.answer()
+
 
 @router.message(Command("support"))
 async def cmd_support(message: Message):
@@ -197,19 +188,34 @@ async def cmd_support(message: Message):
 @router.callback_query(F.data == "show_about")
 async def show_about(callback_query: CallbackQuery):
     lang = await get_user_lang(callback_query)
-    await callback_query.message.edit_text(text=LOCALIZATION[lang]["about_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+    await render_screen(
+        callback_query,
+        text=LOCALIZATION[lang]["about_text"],
+        reply_markup=KEYBOARDS["back"](lang=lang),
+    )
     await callback_query.answer()
+
 
 @router.callback_query(F.data == "show_rules")
 async def show_rules(callback_query: CallbackQuery):
     lang = await get_user_lang(callback_query)
-    await callback_query.message.edit_text(text=LOCALIZATION[lang]["rules_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML", disable_web_page_preview=True)
+    await render_screen(
+        callback_query,
+        text=LOCALIZATION[lang]["rules_text"],
+        reply_markup=KEYBOARDS["back"](lang=lang),
+        disable_web_page_preview=True,
+    )
     await callback_query.answer()
+
 
 @router.callback_query(F.data == "show_support")
 async def show_support(callback_query: CallbackQuery):
     lang = await get_user_lang(callback_query)
-    await callback_query.message.edit_text(text=LOCALIZATION[lang]["support_text"], reply_markup=KEYBOARDS["back"](lang=lang), parse_mode="HTML")
+    await render_screen(
+        callback_query,
+        text=LOCALIZATION[lang]["support_text"],
+        reply_markup=KEYBOARDS["back"](lang=lang),
+    )
     await callback_query.answer()
 
 @router.message(F.text, ~F.text.startswith("/"))

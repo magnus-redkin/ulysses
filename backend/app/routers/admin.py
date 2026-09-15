@@ -132,6 +132,24 @@ async def fix_process_pending(
     logger.info(f"👷 Обработано зависших подписок: {processed}")
     return {"status": "processed", "processed_count": processed}
 
+@router.post("/fix/sync-payments")
+async def fix_sync_payments(
+    min_age_minutes: int = Query(15, ge=1, le=1440, description="Мин. возраст платежа в минутах"),
+    limit: int = Query(50, ge=1, le=200, description="Максимум платежей за раз"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Опрашивает Platega API по зависшим pending/processing платежам и дотягивает статусы."""
+    from app.services.admin_service import sync_pending_payments
+
+    result = await sync_pending_payments(db, min_age_minutes=min_age_minutes, limit=limit)
+    logger.info(
+        f"🔄 Сверка платежей: проверено={result['checked']}, "
+        f"активировано={result['activated']}, "
+        f"отменено={result['cancelled']}, "
+        f"ошибок={result['errors']}"
+    )
+    return result
+
 @router.post("/notify")
 async def admin_notify(payload: NotifyPayload, db: AsyncSession = Depends(get_db)):
     """Отправка уведомлений из веб-админки."""

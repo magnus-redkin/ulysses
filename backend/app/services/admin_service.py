@@ -96,12 +96,43 @@ async def get_diagnostics(db: AsyncSession, verbose: bool = False) -> dict:
     return result
 
 async def cleanup_invoices(db: AsyncSession) -> int:
-    """Удалить pending и зависшие processing инвойсы старше N часов."""
+    """
+    Удалить 'pending'-инвойсы старше N часов.
+    'processing'-зомби (те, что зависли на этапе активации) переводим
+    в 'failed', чтобы сохранить историю — по ним могли пройти деньги.
+    """
+    # 1. pending старше порога — удаляем
     res = await db.execute(
-        text("DELETE FROM payment_attempts WHERE status IN ('pending', 'processing') AND created_at < NOW() - make_interval(hours := :hours)"),
+        text("""
+            DELETE FROM payment_attempts
+            WHERE status = 'pending'
+              AND created_at < NOW() - make_interval(hours := :hours)
+        """),
         {"hours": settings.INVOICE_DIRTY_HOURS}
     )
-    return res.rowcount
+    deleted = res.rowcount
+
+    # 2. processing-зомби — помечаем failed, не удаляем
+    upd = await db.execute(
+        text("""
+            UPDATE payment_attempts
+            SET status = 'failed', updated_at = NOW()
+            WHERE status = 'processing'
+              AND updated_at < NOW() - make_interval(hours := :hours)
+        """),
+        {"hours": settings.INVOICE_DIRTY_HOURS}
+    )
+    failed_zombies = upd.rowcount
+
+    await db.commit()
+
+    if failed_zombies:
+        logger.info(
+            f"🧟 [CLEANUP] processing-зомби помечено failed: {failed_zombies}"
+        )
+
+    return deleted
+
 
 async def get_stats(db: AsyncSession, verbose: bool = False) -> dict:
     """Базовая статистика и, при verbose=True, список зависших подписок."""
@@ -149,24 +180,29 @@ async def get_stats(db: AsyncSession, verbose: bool = False) -> dict:
 
 async def process_pending_provisioning(db: AsyncSession, limit: int = 50) -> int:
     """
-    Возвращает зависшие подписки в очередь обработки.
-    Меняет статус на 'provisioning' и возвращает количество затронутых записей.
+    Возвращает зависшие подписки в очередь обработки:
+    'provisioning_failed' и 'pending_payment' → 'provisioning'.
+    Реальный provisioning выполнит фоновый воркер / повторный вызов Hiddify.
     """
     result = await db.execute(
         text("""
             UPDATE subscriptions
-            SET status = 'provisioning'
+            SET status = 'provisioning',
+                updated_at = NOW()
             WHERE id IN (
                 SELECT id FROM subscriptions
                 WHERE status IN ('provisioning_failed', 'pending_payment')
+                ORDER BY id ASC
                 LIMIT :limit
             )
             RETURNING id
         """),
         {"limit": limit}
     )
-    # await db.commit()
-    return len(result.fetchall())
+    ids = result.fetchall()
+    await db.commit()
+    return len(ids)
+
 async def check_hiddify_sync(db: AsyncSession, limit: int = 1000) -> dict:
     """
     Сравнивает статусы пользователей в БД и на Hiddify.
@@ -240,3 +276,152 @@ async def cleanup_inactive_users(db: AsyncSession, hours: int = 24) -> int:
     )
     await db.commit()
     return res.rowcount
+
+# =====================================================================
+# Автосверка зависших платежей с Platega API
+# =====================================================================
+
+async def sync_pending_payments(
+    db: AsyncSession,
+    min_age_minutes: int = 15,
+    limit: int = 50,
+) -> dict:
+    """
+    Подтягивает статусы 'pending'/'processing' платежей, по которым
+    вебхук от Platega не пришёл.
+
+    Для каждой попытки с сохранённым provider_tx_id опрашивает Platega API:
+      • CONFIRMED  → активирует подписку через ту же логику, что и вебхук
+      • CANCELED   → статус cancelled
+      • DECLINED/EXPIRED → статус failed
+      • PENDING    → оставляет как есть
+    """
+    # Импорт внутри функции — избегаем циклической зависимости при старте
+    from app.platega.platega.platega import Platega
+    from app.services.platega_webhook_handler import _activate_subscription
+
+    result = {
+        "checked": 0,
+        "activated": 0,
+        "cancelled": 0,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "details": [],
+    }
+
+    rows = (await db.execute(text("""
+        SELECT id, user_id, tariff_slug, amount, provider_tx_id, status, created_at
+        FROM payment_attempts
+        WHERE status IN ('pending', 'processing')
+          AND provider_tx_id IS NOT NULL
+          AND provider_tx_id <> 'webhook'
+          AND created_at < NOW() - make_interval(mins => :mins)
+        ORDER BY created_at ASC
+        LIMIT :lim
+    """), {"mins": min_age_minutes, "lim": limit})).fetchall()
+
+    if not rows:
+        logger.info("🔍 [SYNC] Зависших платежей с tx_id не найдено")
+        return result
+
+    logger.info(f"🔍 [SYNC] Проверяем {len(rows)} платежей через Platega API")
+
+    client = Platega(
+        merchant_id=settings.PLATEGA_MERCHANT_ID,
+        secret=settings.PLATEGA_API,
+    )
+
+    for attempt_id, user_id, tariff_slug, amount, tx_id, status, created_at in rows:
+        result["checked"] += 1
+        detail = {
+            "attempt_id": str(attempt_id),
+            "provider_tx_id": tx_id,
+            "local_status_before": status,
+        }
+
+        # 1. Опрос Platega
+        try:
+            payload = client.get_payment_status(tx_id)
+        except Exception as e:
+            logger.warning(f"⚠️ [SYNC] {attempt_id}: ошибка запроса к Platega: {e}")
+            result["errors"] += 1
+            detail["error"] = str(e)[:200]
+            result["details"].append(detail)
+            continue
+
+        platega_status = (payload or {}).get("status", "UNKNOWN")
+        detail["platega_status"] = platega_status
+
+        # 2. Разбираем статус
+        if platega_status in ("CONFIRMED", "success"):
+            try:
+                async with db.begin_nested():
+                    await _activate_subscription(
+                        db,
+                        order_id=attempt_id,
+                        user_id=user_id,
+                        tariff_slug=tariff_slug,
+                        provider_tx_id=tx_id,
+                    )
+                await db.commit()
+                result["activated"] += 1
+                detail["action"] = "activated"
+                logger.info(
+                    f"✅ [SYNC] {attempt_id}: активирован (user_id={user_id}, "
+                    f"tariff={tariff_slug})"
+                )
+            except Exception as e:
+                await db.rollback()
+                result["errors"] += 1
+                detail["error"] = str(e)[:200]
+                logger.exception(f"💥 [SYNC] {attempt_id}: ошибка активации: {e}")
+            result["details"].append(detail)
+            continue
+
+        if platega_status == "CANCELED":
+            await db.execute(
+                text("""
+                    UPDATE payment_attempts
+                    SET status = 'cancelled', updated_at = NOW()
+                    WHERE id = :id AND status IN ('pending', 'processing')
+                """),
+                {"id": attempt_id}
+            )
+            result["cancelled"] += 1
+            detail["action"] = "cancelled"
+            logger.info(f"⚪ [SYNC] {attempt_id}: cancelled (Platega CANCELED)")
+            result["details"].append(detail)
+            continue
+
+        if platega_status in ("FAILED", "DECLINED", "EXPIRED"):
+            await db.execute(
+                text("""
+                    UPDATE payment_attempts
+                    SET status = 'failed', updated_at = NOW()
+                    WHERE id = :id AND status IN ('pending', 'processing')
+                """),
+                {"id": attempt_id}
+            )
+            result["failed"] += 1
+            detail["action"] = "failed"
+            logger.info(f"🔴 [SYNC] {attempt_id}: failed (Platega {platega_status})")
+            result["details"].append(detail)
+            continue
+
+        # PENDING / UNKNOWN / иное — оставляем как есть
+        result["skipped"] += 1
+        detail["action"] = "skipped"
+        logger.info(f"⏭ [SYNC] {attempt_id}: пропущен (Platega {platega_status})")
+        result["details"].append(detail)
+
+    await db.commit()
+    logger.info(
+        f"🏁 [SYNC] Итог: проверено={result['checked']}, "
+        f"активировано={result['activated']}, "
+        f"отменено={result['cancelled']}, "
+        f"failed={result['failed']}, "
+        f"пропущено={result['skipped']}, "
+        f"ошибок={result['errors']}"
+    )
+    return result
