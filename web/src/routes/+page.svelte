@@ -39,17 +39,31 @@
     </p>
 
     <div class="mt-6 space-y-3 text-sm text-gray-400">
-      <p class="pb-4">
+
+      <p class="pb-2">
         {@html locale.current === 'ru'
-          ? '• Улисс <b>не использует Cloudflare</b> и <b>не поддерживает обход белых списков</b> — эти технологии так или иначе связаны с регуляторными организациями и раскрытием данных третьим сторонам. Мы работаем только на собственной инфраструктуре, а трафик идёт напрямую к нашим серверам.'
-          : '• Ulysses <b>does not use Cloudflare</b> and <b>does not provide white-list bypass</b> — these technologies are tied to regulatory organizations and third-party data disclosure. We operate solely on our own infrastructure, and traffic goes directly to our servers.'}
+          ? '• Открытый исходный код и свободная лицензия'
+          : '• Open source and free license.'}
       </p>
-      <p class="pb-4">
+      <p class="pb-2">
         {@html locale.current === 'ru'
-          ? '• Каждому пользователю выдаются две ссылки: 🟢 Simple — для повседневного использования (Telegram, YouTube, браузер), 🔴 Advanced — расширенный набор протоколов: если Simple не работает или нужен минимальный пинг для игр.'
-          : '• Every user gets two links: 🟢 Simple — for everyday use (Telegram, YouTube, browser), 🔴 Advanced — an extended protocol set: use it if Simple doesn\'t work or if you need low ping for gaming.'}
+          ? '• Улисс <b>не использует Cloudflare</b> и <b>не поддерживает обход белых списков</b> — эти технологии так или иначе связаны с регуляторными организациями и раскрытием данных третьим сторонам'
+          : '• Ulysses <b>does not use Cloudflare</b> and <b>does not provide white-list bypass</b> — these technologies are tied to regulatory organizations and third-party data disclosure'}
       </p>
-      <p class="pb-4">
+      <p class="pb-2">
+        {@html locale.current === 'ru'
+          ? '• Каждому пользователю выдаются две ссылки: 🟢 Simple — для повседневного использования (Telegram, YouTube, браузер), 🔴 Advanced — расширенный набор протоколов: если Simple не работает или нужен минимальный пинг для игр'
+          : '• Every user gets two links: 🟢 Simple — for everyday use (Telegram, YouTube, browser), 🔴 Advanced — an extended protocol set: use it if Simple doesn\'t work or if you need low ping for gaming'}
+      </p>
+
+      <p class="pb-2">
+        {@html locale.current === 'ru'
+          ? '• Доступ к российским сервисам из любой страны'
+          : '• Access to Russian services from any country'}
+      </p>
+
+
+      <p class="pb-2">
         {locale.current === 'ru'
           ? '• Путеводитель по выживанию и обходу блокировок: '
           : '• A guide to survival and bypassing censorship: '}
@@ -58,20 +72,49 @@
         </a>
       </p>
 
-      <p class="pb-4">
-        {locale.current === 'ru'
-          ? '• Выбрать клиент: откройте сайт, тап на Download и выберите вашу платформу:'
-          : '• Choose a client: open the site, tap Download, and pick your platform:'}
+      <p class="my-6 font-bold">
+        {locale.current === 'ru' ? 'Нужно сделать две вещи: скачать и установить клиент и оформить подписку' : 'You need to do two things: download and install the client, and sign up for a subscription'}:
       </p>
 
-      <ul class="list-none space-y-2 pl-4 pb-4">
+
+
+      <p class="pb-3_"><b>
+        {locale.current === 'ru'
+          ? '• Выбрать клиент:'
+          : '• Choose a client:'}</b>
+      </p>
+
+      <ul class="list-none space-y-2 pl-4 pb-2_">
         <li>
-          ✅ <b>Hiddify</b> —
-          <a href="https://hiddify.com/" target="_blank" rel="noopener" class="underline hover:text-white transition">hiddify.com</a>
+          ✅ <b>Hiddify App</b> —
+          <a href="https://hiddify.com/app/" target="_blank" rel="noopener" class="underline hover:text-white transition">hiddify.com/app/</a>
           <span class="text-emerald-400">
             {locale.current === 'ru' ? '(рекомендуется)' : '(recommended)'}
           </span>
+          <ul class="list-none space-y-2 pl-4 pb-4_">
+            <li>
+              <b>iOS</b> — App Store: Hiddify v4.0.0
+            </li>
+            <li>
+              <b>{locale.current === 'ru' ? 'все остальные платформы' : 'all other platforms'} </b> —
+              <a href="https://github.com/hiddify/hiddify-app/releases/tag/v4.1.1" target="_blank" rel="noopener" class="underline hover:text-white transition">https://github... /v4.1.1</a>
+            </li>
+            <li>
+              <b>{locale.current === 'ru' ? 'например, Windows' : 'for example, Windows'}</b> —
+              <a href="https://github.com/hiddify/hiddify-app/releases/download/v4.1.1/Hiddify-Windows-Setup-x64.exe" target="_blank" rel="noopener" class="underline hover:text-white transition">.../v4.1.1/Hiddify-Windows-Setup-x64.exe</a>
+            </li>
+          </ul>
         </li>
+      </ul>
+
+
+      <p class="pb-3_">
+        {locale.current === 'ru'
+          ? '• Другие клиенты:'
+          : '• Other clients:'}
+      </p>
+
+      <ul class="list-none space-y-2 pl-4 pb-4">
         <li>
           <b>v2rayTun</b> —
           <a href="https://v2raytun.com/" target="_blank" rel="noopener" class="underline hover:text-white transition">v2raytun.com</a>
@@ -82,21 +125,18 @@
         </li>
       </ul>
 
-
-            <p class="pb-4">
-        📖 {locale.current === 'ru'
-          ? 'Подробнее о выборе клиента и протоколов — в '
-          : 'More about choosing a client and protocols — in the '}
-        <a href="/junglebook/" class="underline hover:text-white transition">
-          {locale.current === 'ru' ? 'Книге Джунглей' : 'Jungle Book'}
-        </a>
-      </p>
-
     </div>
 
-    <p class="my-6 font-bold">
-      {locale.current === 'ru' ? 'несколько минут, и вы в сети:' : 'A few minutes, and you are online:'}
+    <p>
+      <b>{locale.current === 'ru' ? 'Подписка через Телеграм' : 'Subscription via Telegram'}</b>:
+      <a href="https://t.me/ulysses_vpn_bot">@ulysses_vpn_bot</a>
     </p>
+
+
+    <p class="my-2 font-bold">
+      {locale.current === 'ru' ? 'или используйте емейл' : 'otherwise use email'}:
+    </p>
+
 
     <div class="flex flex-col sm:flex-row justify-start items-center gap-4 my-6">
       <a
@@ -114,10 +154,6 @@
       </a>
     </div>
 
-    <p>
-      <b>{locale.current === 'ru' ? 'Телеграм' : 'Telegram'}</b>:
-      <a href="https://t.me/ulysses_vpn_bot">@ulysses_vpn_bot</a>
-    </p>
 
   </article>
 </main>

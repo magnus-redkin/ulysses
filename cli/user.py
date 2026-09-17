@@ -30,6 +30,8 @@ def user():
 user.get_usage = lambda ctx: "uadmin user [ОПЦИИ] КОМАНДА [ARGS]..."
 
 
+
+
 @user.command(name="create")
 @click.option("--tg-id", type=int, required=True)
 @click.option("--username", type=str, required=True)
@@ -53,12 +55,14 @@ async def user_create(tg_id, username):
 
             result = await create_free_subscription(session, user)
 
-            domain = "ulysses.best"
-            subscription_link = f"https://{domain}/subscription/{user['hiddify_uuid']}/#Ulysses"
+            from app.services.subscription_links import build_subscription_links
+            links = build_subscription_links(str(user["hiddify_uuid"]))
+
             console.print(f"\n[bold green]🎉 Пользователь создан![/bold green]")
             console.print(f"👤 TG ID: [cyan]{tg_id}[/cyan] | Username: [cyan]@{clean_username}[/cyan]")
             console.print(f"🔑 UUID: [yellow]{user['hiddify_uuid']}[/yellow]")
-            console.print(f"🔗 Ссылка: [bold magenta]{subscription_link}[/bold magenta]\n")
+            console.print(f"🔗 Simple:   [magenta]{links['simple_link']}[/magenta]")
+            console.print(f"🔗 Advanced: [magenta]{links['advanced_link']}[/magenta]")
         except Exception as err:
             console.print(f"[red]❌ Ошибка: {err}[/red]")
 
@@ -140,12 +144,13 @@ async def user_delete(identifier):
             await session.rollback()
             console.print(f"[red]❌ Ошибка удаления из БД: {e}[/red]")
 
-
 @user.command(name="link")
 @click.argument("identifier")
 @async_cmd
 async def user_link(identifier):
-    """Показать ссылку подписки пользователя."""
+    """Показать ссылки подписки пользователя (Simple / Advanced)."""
+    from app.services.subscription_links import build_subscription_links
+
     async with AsyncSessionLocal() as session:
         row = await find_user_by_identifier(session, identifier)
         if not row:
@@ -157,17 +162,21 @@ async def user_link(identifier):
             console.print(f"[red]❌ У пользователя ID {db_id} отсутствует UUID[/red]")
             return
 
-        base_domain = "ulysses.best"
-        client_sub_url = f"https://{base_domain}/subscription/{hiddify_uuid}/#Ulysses"
+        links = build_subscription_links(str(hiddify_uuid))
 
-        console.print(f"\n[bold green]🔑 Ссылка подписки[/bold green]")
+        console.print(f"\n[bold green]🔑 Ссылки подписки[/bold green]")
         if tg_username:
             console.print(f"👤 @{tg_username} (TG ID: {tg_user_id})", end="")
         else:
             console.print(f"👤 email/no_username", end="")
         console.print(f" (DB ID: {db_id})")
-        console.print(f"🆔 UUID: [yellow]{hiddify_uuid}[/yellow]")
-        console.print(f"🔗 [bold magenta]{client_sub_url}[/bold magenta]\n")
+        console.print(f"🆔 UUID: [yellow]{hiddify_uuid}[/yellow]\n")
+
+        console.print(f"🔗 [bold]Simple[/bold] (рекомендуется):")
+        console.print(f"   [magenta]{links['simple_link']}[/magenta]\n")
+
+        console.print(f"🛠 [bold]Advanced[/bold] (свой клиент):")
+        console.print(f"   [magenta]{links['advanced_link']}[/magenta]\n")
 
 
 @user.command(name="json")

@@ -189,8 +189,8 @@ def _build_config(
             {
                 "type": "udp",
                 "tag": "google",
-                "server": "8.8.8.8",
-                "detour": "direct",
+                "server": "8.8.8.8"
+                #"detour": "direct",
             },
         ],
         "final": "google",
@@ -198,13 +198,11 @@ def _build_config(
 
     return {"outbounds": outbounds, "route": route, "dns": dns}
 
-
 def _inject_rf_node(config: dict, hiddify_uuid: str) -> dict:
     """
-    Добавляет RF outbound в готовый конфиг:
-      • в `outbounds` — всегда;
-      • в selector `proxy` — да (чтобы выбрать вручную);
-      • в urltest `Auto` — НЕТ (не участвует в speedtest).
+    Добавляет RF outbound в конфиг, но НЕ в selector 'proxy'.
+    RF-нода доступна только через route rule: .ru/.рф идут через неё.
+    Пользователь не может выбрать RF вручную — поэтому не потеряет Telegram.
     """
     if not config:
         return config
@@ -216,22 +214,29 @@ def _inject_rf_node(config: dict, hiddify_uuid: str) -> dict:
     outbounds = config.get("outbounds", [])
     rf_tag = rf["tag"]
 
-    # Защита от повторного добавления
+    # Идемпотентность
     if any(ob.get("tag") == rf_tag for ob in outbounds):
         return config
-
-    for ob in outbounds:
-        if ob.get("type") == "selector" and ob.get("tag") == "proxy":
-            ob.setdefault("outbounds", [])
-            if rf_tag not in ob["outbounds"]:
-                ob["outbounds"].append(rf_tag)
-        # urltest "Auto" — намеренно НЕ трогаем
 
     outbounds.append(rf)
     config["outbounds"] = outbounds
 
-    logger.info(f"🇷🇺 [RF-NODE] outbound добавлен с тегом '{rf_tag}'")
+    # 🇷🇺 Split-routing: .ru/.рф автоматически через RF-ноду
+    route = config.setdefault("route", {})
+    rules = route.setdefault("rules", [])
+
+    if not any(r.get("outbound") == rf_tag for r in rules):
+        rules.append({
+            # "domain_suffix": [".ru", ".рф", ".xn--p1ai"],
+            "domain_suffix": [".ru", ".xn--p1ai"],   # .рф убран
+            "outbound": rf_tag,
+        })
+
+    logger.info(
+        f"🇷🇺 [RF-NODE] outbound добавлен (только route-rule), тег '{rf_tag}'"
+    )
     return config
+
 
 
 async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:

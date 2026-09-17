@@ -1,3 +1,4 @@
+# backend/app/services/bot_service.py
 """
 Бизнес-логика для Telegram-бота: регистрация, состояние, действия.
 """
@@ -17,14 +18,19 @@ logger = logging.getLogger(__name__)
 async def register_user(
     db: AsyncSession,
     tg_user_id: int,
-    tg_username: str,
+    tg_username: str | None,
     hiddify_uuid: str = None
 ) -> dict:
     """
     Регистрация пользователя в боте с поддержкой deep linking.
     Если передан UUID — привязать Telegram к существующему профилю.
     """
-    clean_username = tg_username.lstrip("@").strip()
+    # Нормализация username: None / "" / "unknown" / "-" → NULL
+    clean_username: str | None = None
+    if tg_username:
+        candidate = str(tg_username).lstrip("@").strip()
+        if candidate and candidate.lower() not in ("unknown", "-"):
+            clean_username = candidate
 
     # 1. Deep link: привязка к существующему профилю по UUID
     if hiddify_uuid:
@@ -68,7 +74,10 @@ async def register_user(
         {"tg_id": tg_user_id, "username": clean_username, "uuid": new_uuid, "email": default_email}
     )
     await db.commit()
-    logger.info(f"Created new user {tg_user_id} with UUID {new_uuid}")
+    logger.info(
+        f"Created new user {tg_user_id} with UUID {new_uuid}, "
+        f"username={clean_username or 'null'}"
+    )
     return {"status": "registered", "created": True}
 
 
