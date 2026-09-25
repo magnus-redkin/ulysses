@@ -31,17 +31,19 @@ def format_balance_from_state(balance: dict, lang: str = "ru") -> str:
     # Забираем чистый UUID из ответа сервера
     user_uuid = str(balance.get("hiddify_uuid", "UNKNOWN_UUID")).strip()
 
-    simple_url = "https://ulysses.best/subscription/" + user_uuid + "/simple"
-    advanced_url = "https://ulysses.best/subscription/" + user_uuid + "/advanced"
+    global_url = "https://ulysses.best/subscription/" + user_uuid + "#Ulysses-global"
+    ru_url = "https://ulysses.best/subscription/" + user_uuid + "/ru#Ulysses-ru"
     acc_url = "https://ulysses.best/account/" + user_uuid
     bot_url = "https://t.me/ulysses_vpn_bot?start=" + user_uuid
 
     if lang == "en":
         links_header = (
-            "🔗 <b>Simple subscription:</b>\n"
-            "<code>" + simple_url + "</code>\n\n"
-            "🔗 <b>Advanced subscription:</b>\n"
-            "<code>" + advanced_url + "</code>\n\n"
+            "🌍 <b>Global — for everyday use (Russia):</b>\n"
+            "Bypass blocks: YouTube, Telegram, foreign sites.\n"
+            "<code>" + global_url + "</code>\n\n"
+            "🇷🇺 <b>Russia — for Russian services (abroad):</b>\n"
+            "Gosuslugi, Sber, Twigle. <b>YouTube doesn't work here.</b>\n"
+            "<code>" + ru_url + "</code>\n\n"
             "📊 <b>Personal Account:</b>\n"
             + acc_url + "\n\n"
             "🤖 <b>Telegram Support:</b>\n"
@@ -50,10 +52,12 @@ def format_balance_from_state(balance: dict, lang: str = "ru") -> str:
         )
     else:
         links_header = (
-            "🔗 <b>Simple — для повседневного использования:</b>\n"
-            "<code>" + simple_url + "</code>\n\n"
-            "🔗 <b>Advanced — для игр и гиков:</b>\n"
-            "<code>" + advanced_url + "</code>\n\n"
+            "🌍 <b>Global — для повседневного использования (РФ):</b>\n"
+            "Обход блокировок: YouTube, Telegram, зарубежные сайты.\n"
+            "<code>" + global_url + "</code>\n\n"
+            "🇷🇺 <b>Russia — для российских сервисов (за рубежом):</b>\n"
+            "Госуслуги, Сбер, Twigle. <b>YouTube в ней не работает.</b>\n"
+            "<code>" + ru_url + "</code>\n\n"
             "📊 <b>Личный кабинет:</b>\n"
             + acc_url + "\n\n"
             "🤖 <b>Поддержка в Telegram:</b>\n"

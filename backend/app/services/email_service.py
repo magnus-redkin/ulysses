@@ -101,17 +101,13 @@ class EmailService:
         logger.error(f"❌ Не удалось отправить письмо на {to_email}")
         return False
 
-
-
     def get_welcome_email(self, to_email: str, hiddify_uuid: str) -> tuple:
         domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-        #subscription_link = f"https://{domain}/subscription/{hiddify_uuid}/#Ulysses"
         account_link = f"https://ulysses.best/account/{hiddify_uuid}"
         telegram_bot_link = f"https://t.me/ulysses_vpn_bot?start={hiddify_uuid}"
-        base = f"https://ulysses.best/subscription/{hiddify_uuid}"
-        simple_link = f"{base}/simple#Ulysses-simple"
-        advanced_link = f"{base}/advanced#Ulysses-advanced"
-
+        base = f"https://{domain}/subscription/{hiddify_uuid}"
+        global_link = base
+        ru_link = f"{base}/ru"
 
         subject = "Ulysses Lab — ваш доступ активирован"
 
@@ -122,11 +118,13 @@ class EmailService:
         <p>Здравствуйте!</p>
         <p>Ваш доступ к Ulysses Lab активирован.</p>
 
-        <p>🔗 <strong>Ссылка для подключения Simple:</strong><br>
-        <a href="{simple_link}">{simple_link}</a></p>
+        <p>🌍 <strong>Global — для всего:</strong><br>
+        Telegram, YouTube, обычные сайты.<br>
+        <a href="{global_link}">{global_link}</a></p>
 
-        <p>🔗 <strong>Ссылка для подключения Advanced:</strong><br>
-        <a href="{advanced_link}">{advanced_link}</a></p>
+        <p>🇷🇺 <strong>Russia — для российских сервисов:</strong><br>
+        Госуслуги, Сбер, Twigle. <strong>YouTube в ней не работает.</strong><br>
+        <a href="{ru_link}">{ru_link}</a></p>
 
         <p>📊 <strong>Личный кабинет:</strong><br>
         <a href="{account_link}">{account_link}</a></p>
@@ -136,10 +134,13 @@ class EmailService:
 
         <p>Инструкция:</p>
         <ol style="padding-left: 20px;">
-        <li>Скопируйте ссылку <b>Simple</b> и добавьте её в Hiddify Next («Добавить профиль» → «Из буфера обмена»).</li>
-        <li>Подключитесь к серверу.</li>
-        <li>Если что-то не работает или нужен минимальный пинг для игр — добавьте вторую ссылку <b>Advanced</b>.</li>
+        <li>Скопируйте нужную ссылку и добавьте её в Hiddify Next («Добавить профиль» → «Из буфера обмена»).</li>
+        <li><b>🌍 Global</b> — вы в РФ: обход блокировок (YouTube, Telegram, зарубежные сайты).</li>
+        <li><b>🇷🇺 Russia</b> — вы за рубежом: доступ к Госуслугам, Сберу, Twigle.</li>
         </ol>
+
+        <p>Почему две ссылки: <a href="https://ulysses.best/junglebook/two_links">ulysses.best/junglebook/two_links</a></p>
+
 
         <p style="color: #888; font-size: 12px; text-align: center;">
         Ulysses Lab<br>
@@ -152,13 +153,13 @@ class EmailService:
         text_body = f"""\
         Здравствуйте!
 
-        Ваш доступ к Ulysses VPN активирован.
+        Ваш доступ к Ulysses Lab активирован.
 
-        🔗 Simple (для Telegram и YouTube):
-        {simple_link}
+        🌍 Global — для всего (Telegram, YouTube, обычные сайты):
+        {global_link}
 
-        🔗 Advanced (для игр и гиков):
-        {advanced_link}
+        🇷🇺 Russia — для российских сервисов (Госуслуги, Сбер, Twigle):
+        {ru_link}
 
         📊 Личный кабинет:
         {account_link}
@@ -167,11 +168,15 @@ class EmailService:
         {telegram_bot_link}
 
         Инструкция:
-        1. Скопируйте ссылку Simple и добавьте её в Hiddify Next.
-        2. Подключитесь.
-        3. Если что-то не работает — добавьте вторую ссылку Advanced.
+        1. Скопируйте нужную ссылку и добавьте её в Hiddify Next.
+        2. Global — вы в РФ: обход блокировок (YouTube, Telegram, зарубежные сайты).
+        3. Russia — вы за рубежом: доступ к Госуслугам, Сберу, и т.д.
+
+        Почему две ссылки: https://ulysses.best/junglebook/two_links
         """
+
         return subject, html_body, text_body
+
 
     def get_expiring_email(self, to_email: str, days_left: int) -> tuple:
         """

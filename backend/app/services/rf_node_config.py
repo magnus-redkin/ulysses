@@ -2,6 +2,8 @@
 """
 Локальное построение sing-box outbound для RF-ноды.
 Никаких HTTP-запросов — все параметры берутся из settings.
+
+Используется в роуте /subscription/{uuid}/ru (подписка Russia).
 """
 
 import logging
@@ -13,8 +15,9 @@ logger = logging.getLogger(__name__)
 def build_rf_outbound(user_uuid: str) -> dict | None:
     """
     Возвращает sing-box outbound для RF-ноды или None, если нода выключена.
-    Используется и для Simple, и для Advanced.
+    Используется только в подписке Russia (/subscription/{uuid}/ru).
     """
+
     if not getattr(settings, "RF_NODE_ENABLED", False):
         return None
 
@@ -27,7 +30,7 @@ def build_rf_outbound(user_uuid: str) -> dict | None:
         logger.warning("⚠️ [RF-NODE] не хватает параметров для outbound")
         return None
 
-    tag = getattr(settings, "RF_NODE_TAG", None) or "🇷🇺 RU — VLESS Reality"
+    tag = "VLESS Reality"
 
     return {
         "type": "vless",
@@ -35,7 +38,7 @@ def build_rf_outbound(user_uuid: str) -> dict | None:
         "server": settings.RF_NODE_HOST,
         "server_port": settings.RF_NODE_PORT,
         "uuid": str(user_uuid),
-        "flow": settings.RF_NODE_FLOW or "xtls-rprx-vision",
+        # "flow": settings.RF_NODE_FLOW or "xtls-rprx-vision",
         "tls": {
             "enabled": True,
             "server_name": settings.RF_NODE_SNI,

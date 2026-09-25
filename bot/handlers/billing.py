@@ -45,8 +45,8 @@ async def _execute_invoice_creation(callback_query: CallbackQuery, tariff_slug: 
     if result.get("status") == "free_tariff" or result.get("subscription_link"):
         exp_date = result.get("expires_at", "")[:10]
         msg = loc["free_success"].format(
-            simple_link=result.get("simple_link", ""),
-            advanced_link=result.get("advanced_link", ""),
+            global_link=result.get("global_link", ""),
+            ru_link=result.get("ru_link", ""),
             exp=exp_date,
         )
         await render_screen(

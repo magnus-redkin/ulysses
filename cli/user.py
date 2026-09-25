@@ -15,6 +15,7 @@ from app.services.free_subscription import create_free_subscription
 
 console = Console()
 
+
 def async_cmd(f):
     import functools
     @functools.wraps(f)
@@ -22,14 +23,14 @@ def async_cmd(f):
         return asyncio.run(f(*args, **kwargs))
     return wrapper
 
+
 @click.group(name="user")
 def user():
     """Управление пользователями биллинга Ulysses VPN."""
     pass
 
+
 user.get_usage = lambda ctx: "uadmin user [ОПЦИИ] КОМАНДА [ARGS]..."
-
-
 
 
 @user.command(name="create")
@@ -61,8 +62,14 @@ async def user_create(tg_id, username):
             console.print(f"\n[bold green]🎉 Пользователь создан![/bold green]")
             console.print(f"👤 TG ID: [cyan]{tg_id}[/cyan] | Username: [cyan]@{clean_username}[/cyan]")
             console.print(f"🔑 UUID: [yellow]{user['hiddify_uuid']}[/yellow]")
-            console.print(f"🔗 Simple:   [magenta]{links['simple_link']}[/magenta]")
-            console.print(f"🔗 Advanced: [magenta]{links['advanced_link']}[/magenta]")
+            console.print(f"📅 Подписка до: [green]{result['expires_at'][:10]}[/green]\n")
+
+            console.print(f"🌍 [bold]Global[/bold] (для всего — Telegram, YouTube, обычные сайты):")
+            console.print(f"   [magenta]{links['global_link']}[/magenta]\n")
+
+            console.print(f"🇷🇺 [bold]Russia[/bold] (для Госуслуг, Сбера, Twigle):")
+            console.print(f"   [magenta]{links['ru_link']}[/magenta]\n")
+
         except Exception as err:
             console.print(f"[red]❌ Ошибка: {err}[/red]")
 
@@ -144,11 +151,12 @@ async def user_delete(identifier):
             await session.rollback()
             console.print(f"[red]❌ Ошибка удаления из БД: {e}[/red]")
 
+
 @user.command(name="link")
 @click.argument("identifier")
 @async_cmd
 async def user_link(identifier):
-    """Показать ссылки подписки пользователя (Simple / Advanced)."""
+    """Показать ссылки подписки пользователя (Global / Russia)."""
     from app.services.subscription_links import build_subscription_links
 
     async with AsyncSessionLocal() as session:
@@ -172,11 +180,11 @@ async def user_link(identifier):
         console.print(f" (DB ID: {db_id})")
         console.print(f"🆔 UUID: [yellow]{hiddify_uuid}[/yellow]\n")
 
-        console.print(f"🔗 [bold]Simple[/bold] (рекомендуется):")
-        console.print(f"   [magenta]{links['simple_link']}[/magenta]\n")
+        console.print(f"🌍 [bold]Global[/bold] (для всего — Telegram, YouTube, обычные сайты):")
+        console.print(f"   [magenta]{links['global_link']}[/magenta]\n")
 
-        console.print(f"🛠 [bold]Advanced[/bold] (свой клиент):")
-        console.print(f"   [magenta]{links['advanced_link']}[/magenta]\n")
+        console.print(f"🇷🇺 [bold]Russia[/bold] (для Госуслуг, Сбера, Twigle):")
+        console.print(f"   [magenta]{links['ru_link']}[/magenta]\n")
 
 
 @user.command(name="json")
@@ -195,7 +203,6 @@ async def user_json(identifier):
             console.print("[red]❌ UUID отсутствует[/red]")
             return
 
-        # Статус подписки
         sub_result = await session.execute(
             text("SELECT status, expires_at FROM subscriptions WHERE user_id = :uid ORDER BY expires_at DESC LIMIT 1"),
             {"uid": db_id}
@@ -217,7 +224,8 @@ async def user_json(identifier):
 
         try:
             from app.services.subscription_aggregator import aggregate_subscriptions
-            json_config = await aggregate_subscriptions(str(hiddify_uuid))
+            data = await aggregate_subscriptions(str(hiddify_uuid), mode="full")
+            json_config = (data or {}).get("main")
 
             console.print("📄 ОБЪЕДИНЁННЫЙ SING-BOX JSON (Все ноды):")
             console.print("─" * 100)
@@ -255,7 +263,6 @@ async def user_subscription_status(identifier, history, show_all, limit):
         tg_username, tg_user_id, hiddify_uuid, db_id = row
         hiddify_uuid_str = str(hiddify_uuid).strip() if hiddify_uuid else ""
 
-        # Проверка на нодах (как было)
         if hiddify_uuid_str and hiddify_uuid_str not in ("None", "-"):
             from app.services.node_manager import node_manager
             nodes = node_manager.get_hfm_nodes()
@@ -276,7 +283,6 @@ async def user_subscription_status(identifier, history, show_all, limit):
         else:
             hfm_status_str = "[red]Нет UUID[/red]"
 
-        # --- Основной профиль ---
         console.print(f"\n👤 Профиль ID {db_id}")
         if tg_username:
             console.print(f"   • Telegram: @{tg_username} (ID: {tg_user_id})")
@@ -285,7 +291,6 @@ async def user_subscription_status(identifier, history, show_all, limit):
         console.print(f"   • UUID: [yellow]{hiddify_uuid_str}[/yellow]")
         console.print(f"   • Статус на Ноде: {hfm_status_str}\n")
 
-        # --- Активная подписка (как было) ---
         sql_active = """
             SELECT id, tariff_slug, status, node_id, starts_at, expires_at,
                    provisioning_attempts, provisioning_error
@@ -330,14 +335,12 @@ async def user_subscription_status(identifier, history, show_all, limit):
 
             console.print(table)
 
-        # --- История ---
         if not history:
             console.print("")
             return
 
         limit_sql = "" if limit is None else f"LIMIT {int(limit)}"
 
-        # Все подписки (включая активные)
         sql_all_subs = f"""
             SELECT id, tariff_slug, status, node_id, starts_at, expires_at,
                    provisioning_attempts, provisioning_error
@@ -378,7 +381,6 @@ async def user_subscription_status(identifier, history, show_all, limit):
         else:
             console.print("[dim](пусто)[/dim]")
 
-        # Все платежи
         sql_pays = f"""
             SELECT id, status, amount, currency, tariff_slug, created_at
             FROM payment_attempts
@@ -423,6 +425,7 @@ async def user_subscription_status(identifier, history, show_all, limit):
             console.print("[dim](пусто)[/dim]")
 
         console.print("")
+
 
 @user.command(name="rf-sync")
 @async_cmd

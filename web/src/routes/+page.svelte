@@ -50,11 +50,13 @@
           ? '• Улисс <b>не использует Cloudflare</b> и <b>не поддерживает обход белых списков</b> — эти технологии так или иначе связаны с регуляторными организациями и раскрытием данных третьим сторонам'
           : '• Ulysses <b>does not use Cloudflare</b> and <b>does not provide white-list bypass</b> — these technologies are tied to regulatory organizations and third-party data disclosure'}
       </p>
+
       <p class="pb-2">
         {@html locale.current === 'ru'
-          ? '• Каждому пользователю выдаются две ссылки: 🟢 Simple — для повседневного использования (Telegram, YouTube, браузер), 🔴 Advanced — расширенный набор протоколов: если Simple не работает или нужен минимальный пинг для игр'
-          : '• Every user gets two links: 🟢 Simple — for everyday use (Telegram, YouTube, browser), 🔴 Advanced — an extended protocol set: use it if Simple doesn\'t work or if you need low ping for gaming'}
+          ? '• Каждому пользователю выдаются две ссылки: 🌍 Global — для пользователей в РФ (обход блокировок: YouTube, Telegram, зарубежные сайты), 🇷🇺 Russia — для тех, кто за рубежом (доступ к Госуслугам, Сберу, Twigle)'
+          : '• Every user gets two links: 🌍 Global — for users in Russia (bypass blocks: YouTube, Telegram, foreign sites), 🇷🇺 Russia — for those abroad (access to Gosuslugi, Sber, Twigle)'}
       </p>
+
 
       <p class="pb-2">
         {@html locale.current === 'ru'

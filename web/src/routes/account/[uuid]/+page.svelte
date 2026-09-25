@@ -21,14 +21,27 @@
       }
       return n === 1 ? 'day' : 'days';
     },
-    simpleLabel: locale.current === 'ru'
-      ? 'Simple — для Telegram и YouTube'
-      : 'Simple — for Telegram and YouTube',
-    advancedLabel: locale.current === 'ru'
-      ? 'Advanced — для игр и гиков'
-      : 'Advanced — for gaming and power users',
-    copySimple: locale.current === 'ru' ? 'Скопировать Simple' : 'Copy Simple',
-    copyAdvanced: locale.current === 'ru' ? 'Скопировать Advanced' : 'Copy Advanced',
+
+    globalLabel: locale.current === 'ru'
+      ? '🌍 Global — для пользователей в РФ: обход блокировок'
+      : '🌍 Global — for users in Russia: bypass blocks',
+    ruLabel: locale.current === 'ru'
+      ? '🇷🇺 Russia — для тех, кто за рубежом: Госуслуги, Сбер, Twigle'
+      : '🇷🇺 Russia — for those abroad: Gosuslugi, Sber, Twigle',
+    compatLabel: locale.current === 'ru'
+      ? '🛠 Compat — для устаревших клиентов и Happ на iOS'
+      : '🛠 Compat — for outdated clients and Happ on iOS',
+    compatHint: locale.current === 'ru'
+      ? 'Используйте, только если Global не работает.'
+      : 'Use only if Global doesn\'t work.',
+    junglebookHint: locale.current === 'ru'
+      ? 'Почему две ссылки? Читайте в Книге Джунглей.'
+      : 'Why two links? Read the Jungle Book.',
+    copyGlobal: locale.current === 'ru' ? 'Скопировать Global' : 'Copy Global',
+    copyRu: locale.current === 'ru' ? 'Скопировать Russia' : 'Copy Russia',
+    copyCompat: locale.current === 'ru' ? 'Скопировать Compat' : 'Copy Compat',
+
+
     copied: locale.current === 'ru' ? 'Скопировано!' : 'Copied!',
     loading: locale.current === 'ru' ? 'Загрузка...' : 'Loading...',
     renew: locale.current === 'ru' ? 'Продлить' : 'Renew',
@@ -78,51 +91,84 @@
         </div>
       {/if}
 
-      <!-- Ссылки Simple / Advanced -->
-      {#if account.simple_link || account.advanced_link}
+
+      <!-- Ссылки: Global + Russia сверху, Compat снизу -->
+      {#if account.global_link || account.ru_link}
         <div class="space-y-3">
-          {#if account.simple_link}
+          <!-- Global -->
+          {#if account.global_link}
             <div>
-              <div class="text-gray-400 mb-1">{t.simpleLabel}:</div>
+              <div class="text-gray-400 mb-1">{t.globalLabel}:</div>
               <div class="flex items-center gap-3 flex-wrap">
                 <code class="bg-gray-800 px-3 py-1.5 rounded text-sm text-gray-300 break-all">
-                  {account.simple_link}
+                  {account.global_link}
                 </code>
                 <button
-                  onclick={() => copyLink(account.simple_link)}
+                  onclick={() => copyLink(account.global_link)}
                   class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg transition font-semibold flex items-center gap-1"
                 >
-                  {#if copiedLink === account.simple_link}
+                  {#if copiedLink === account.global_link}
                     <span>✓</span> {t.copied}
                   {:else}
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
-                    {t.copySimple}
+                    {t.copyGlobal}
                   {/if}
                 </button>
               </div>
             </div>
           {/if}
 
-          {#if account.advanced_link}
+          <!-- Russia -->
+          {#if account.ru_link}
             <div>
-              <div class="text-gray-400 mb-1">{t.advancedLabel}:</div>
+              <div class="text-gray-400 mb-1">{t.ruLabel}:</div>
               <div class="flex items-center gap-3 flex-wrap">
                 <code class="bg-gray-800 px-3 py-1.5 rounded text-sm text-gray-300 break-all">
-                  {account.advanced_link}
+                  {account.ru_link}
                 </code>
                 <button
-                  onclick={() => copyLink(account.advanced_link)}
+                  onclick={() => copyLink(account.ru_link)}
                   class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg transition font-semibold flex items-center gap-1"
                 >
-                  {#if copiedLink === account.advanced_link}
+                  {#if copiedLink === account.ru_link}
                     <span>✓</span> {t.copied}
                   {:else}
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
-                    {t.copyAdvanced}
+                    {t.copyRu}
+                  {/if}
+                </button>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Разъяснение -->
+          <p class="text-sm text-gray-500 pt-2">
+            <a href="/junglebook/two_links" class="underline hover:text-gray-300 transition">
+              {t.junglebookHint}
+            </a>
+          </p>
+
+          <!-- Compat (снизу, компактно) -->
+          {#if account.compat_link}
+            <div class="pt-4 mt-2 border-t border-gray-800">
+              <div class="text-gray-500 mb-1 text-sm">{t.compatLabel}:</div>
+              <div class="text-xs text-gray-600 mb-2">{t.compatHint}</div>
+              <div class="flex items-center gap-3 flex-wrap">
+                <code class="bg-gray-800/60 px-3 py-1.5 rounded text-xs text-gray-400 break-all">
+                  {account.compat_link}
+                </code>
+                <button
+                  onclick={() => copyLink(account.compat_link)}
+                  class="bg-gray-700 hover:bg-gray-600 text-gray-200 px-3 py-1.5 rounded-lg transition text-sm font-medium flex items-center gap-1"
+                >
+                  {#if copiedLink === account.compat_link}
+                    <span>✓</span> {t.copied}
+                  {:else}
+                    {t.copyCompat}
                   {/if}
                 </button>
               </div>
@@ -136,6 +182,7 @@
             : 'Subscription links are temporarily unavailable.'}
         </p>
       {/if}
+
 
       <!-- Действия -->
       {#if account.status !== 'active'}

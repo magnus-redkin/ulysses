@@ -56,5 +56,24 @@ def notify_broadcast(message: str):
     asyncio.run(_run())
 
 
+@notify.command(name="alert-failure")
+@click.argument("unit_name", type=str)
+def notify_alert_failure(unit_name: str):
+    """Алерт админам при падении systemd unit (вызывается из OnFailure=)."""
+    import os
+    import socket
+
+    hostname = socket.gethostname()
+    msg = (
+        f"🚨 <b>Unit упал</b>\n\n"
+        f"• Хост: <code>{hostname}</code>\n"
+        f"• Unit: <code>{unit_name}</code>\n"
+        f"• Время: <code>{__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC</code>\n\n"
+        f"Проверить: <code>journalctl -u {unit_name} -n 50</code>"
+    )
+    ok = asyncio.run(send_admin_alert(msg))
+    click.echo(f"{'✅' if ok else '❌'} Alert sent for {unit_name}")
+
+
 if __name__ == "__main__":
     notify()

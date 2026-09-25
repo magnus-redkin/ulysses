@@ -275,8 +275,8 @@ async def _activate_subscription(
                 f"💳 <b>Оплата получена!</b>\n\n"
                 f"Подписка продлена на <b>{days_to_add} дней</b>.\n"
                 f"📅 До: <code>{new_expires.strftime('%Y-%m-%d %H:%M')}</code> UTC.\n\n"
-                f"🔗 <a href='{links['simple_link']}'>Simple (рекомендуется)</a>\n"
-                f"🛠 <a href='{links['advanced_link']}'>Advanced (свой клиент)</a>"
+                f"🌍 <a href='{links['global_link']}'>Global — для всего</a>\n"
+                f"🇷🇺 <a href='{links['ru_link']}'>Russia — для Госуслуг и Сбера</a>"
             )
             await send_telegram_message(tg_id, msg)
         except Exception as e:

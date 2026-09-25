@@ -1,23 +1,19 @@
 <script>
-  import { page } from '$app/state';
+  import { afterNavigate } from '$app/navigation';
   import { locale } from '$lib/locale.svelte.js';
 
-  // 1. Пропс: slug текущей страницы (исправлено для Svelte 5)
   let { slug = 'index' } = $props();
 
-  // 2. Получаем текущий язык
   let currentLang = $derived(locale.current);
 
-  // 3. Импортируем все .md файлы
-  const allChapters = import.meta.glob('/src/lib/junglebook/*/*.md', { eager: true });
+  const allChapters = import.meta.glob('/src/lib/junglebook/*/*.md');
 
-  // 4. Вычисляем содержимое
-  let CurrentContent = $derived.by(() => {
+  let contentPromise = $derived.by(() => {
     const path = `/src/lib/junglebook/${currentLang}/${slug}.md`;
-    return allChapters[path]?.default || null;
+    const loader = allChapters[path];
+    return loader ? loader() : Promise.resolve(null);
   });
 
-  // 5. Список глав с переводами (оставлен как у вас, добавлен whitelists)
   const chaptersData = {
     ru: [
       { slug: 'index', title: 'Содержание Книги' },
@@ -31,6 +27,7 @@
       { slug: 'how-to-choose-vpn', title: 'Критерии устойчивости в эпоху жесткой цензуры' },
       { slug: 'whitelists', title: 'Белые списки' },
       { title: 'Клиенты', chapter: true },
+      { slug: 'two_links', title: 'Почему две ссылки, Global и Russia?' },
       { slug: 'client', title: 'Настройки клиента Hiddify' },
       { slug: 'v2rayN-Hiddify', title: 'v2rayN vs. Hiddify-Client vs. Happ' },
       { title: 'Справка по Протоколам и Транспортам', chapter: true },
@@ -55,6 +52,7 @@
       { slug: 'how-to-choose-vpn', title: 'Resilience Criteria in the Age of Heavy Censorship' },
       { slug: 'whitelists', title: 'Whitelists' },
       { title: 'Clients', chapter: true },
+      { slug: 'two_links', title: 'Why two links, Global и Russia?' },
       { slug: 'client', title: 'Hiddify Client Settings' },
       { slug: 'v2rayN-Hiddify', title: 'v2rayN vs. Hiddify-Client vs. Happ' },
       { title: 'Protocol & Transport Reference', chapter: true },
@@ -70,10 +68,108 @@
   };
 
   let currentChapters = $derived(chaptersData[currentLang] || chaptersData.ru);
+
+  const t = $derived(currentLang === 'en'
+    ? { notFound: 'Chapter not found', missingIn: 'Missing file', missingFolder: 'in folder', copy: 'Copy link' }
+    : { notFound: 'Глава не найдена', missingIn: 'отсутствует файл', missingFolder: 'В папке', copy: 'Скопировать ссылку' }
+  );
+
+  let pageTitle = $derived.by(() => {
+    const found = currentChapters.find(c => c.slug === slug);
+    return found ? `${found.title} — Jungle Book` : 'Jungle Book';
+  });
+
+  // ---- АНКОРЫ ----
+
+  function slugify(text) {
+    return text
+      .toString()
+      .normalize('NFKD')
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s\u0400-\u04FF-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+  }
+
+  function scrollToHash(hash) {
+    if (!hash) return;
+    const id = decodeURIComponent(hash.replace(/^#/, ''));
+    if (!id) return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  /**
+   * Экшен: расставляет id + кликабельные # у заголовков внутри контейнера.
+   * @param {HTMLElement} node
+   */
+  function anchorHeadings(node) {
+    const headings = node.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const used = new Set();
+
+    for (const h of headings) {
+      if (h.dataset.anchored === 'true') continue;
+
+      // текст без уже вставленного якоря
+      const raw = (h.textContent || '').replace(/#$/, '').trim();
+      if (!raw) continue;
+
+      let id = slugify(raw);
+      if (!id) continue;
+
+      // уникальность
+      if (used.has(id)) {
+        let n = 2;
+        const base = id;
+        while (used.has(`${base}-${n}`)) n++;
+        id = `${base}-${n}`;
+      }
+      used.add(id);
+
+      h.id = id;
+      h.dataset.anchored = 'true';
+
+      const a = document.createElement('a');
+      a.href = `#${id}`;
+      a.className = 'heading-anchor';
+      a.textContent = '#';
+      a.title = t.copy;
+      a.setAttribute('aria-label', t.copy);
+
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        const url = new URL(window.location.href);
+        url.hash = id;
+        history.replaceState(null, '', `#${id}`);
+        navigator.clipboard?.writeText(url.toString()).catch(() => {});
+        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+
+      h.appendChild(a);
+    }
+
+    // начальный скролл при монтировании
+    scrollToHash(window.location.hash);
+
+    return {
+      destroy() {}
+    };
+  }
+
+  // SvelteKit при клиентской навигации сам хэш не скроллит
+  afterNavigate(({ to }) => {
+    if (to?.hash) scrollToHash(to.hash);
+  });
 </script>
 
+<svelte:head>
+  <title>{pageTitle}</title>
+</svelte:head>
+
 <div class="py-10 grid grid-cols-1 md:grid-cols-12 gap-8">
-  <!-- Боковое меню -->
   <aside class="md:col-span-4 border-r border-slate-800 pr-4">
     <h3 class="text-xs font-mono uppercase tracking-wider text-slate-500 mb-4">
       <a href="/junglebook/">Jungle Book</a>
@@ -93,18 +189,53 @@
     </nav>
   </aside>
 
-  <!-- Основной текст -->
   <main class="md:col-span-8 prose prose-invert max-w-none">
-    {#if CurrentContent}
-      <CurrentContent />
-    {:else}
+    {#await contentPromise}
+      <p class="text-slate-500 font-mono text-sm">Loading…</p>
+    {:then module}
+      {#if module?.default}
+        {@const Content = module.default}
+        <div use:anchorHeadings>
+          <Content />
+        </div>
+      {:else}
+        <div class="p-4 bg-rose-950/40 border border-rose-800 text-rose-300 font-mono rounded">
+          <h2 class="text-rose-400 font-bold mb-2">{t.notFound}</h2>
+          <p class="text-xs">
+            {t.missingFolder} <span class="text-white bg-slate-900 px-1 py-0.5 rounded">/src/lib/junglebook/{currentLang}/</span>
+            {t.missingIn} <span class="text-white bg-slate-900 px-1 py-0.5 rounded">{slug}.md</span>
+          </p>
+        </div>
+      {/if}
+    {:catch err}
       <div class="p-4 bg-rose-950/40 border border-rose-800 text-rose-300 font-mono rounded">
-        <h2 class="text-rose-400 font-bold mb-2">Глава не найдена</h2>
-        <p class="text-xs">
-          В папке <span class="text-white bg-slate-900 px-1 py-0.5 rounded">/src/lib/junglebook/{currentLang}/</span>
-          отсутствует файл <span class="text-white bg-slate-900 px-1 py-0.5 rounded">{slug}.md</span>
-        </p>
+        <h2 class="text-rose-400 font-bold mb-2">Error</h2>
+        <pre class="text-xs whitespace-pre-wrap">{err?.message}</pre>
       </div>
-    {/if}
+    {/await}
   </main>
 </div>
+
+<style>
+  /* `#` рядом с заголовком — видна при наведении */
+  :global(.heading-anchor) {
+    margin-left: 0.5rem;
+    font-size: 0.75em;
+    font-weight: 400;
+    color: rgb(96 165 250); /* blue-400 */
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    user-select: none;
+  }
+  :global(:is(h1, h2, h3, h4, h5, h6):hover .heading-anchor),
+  :global(.heading-anchor:focus-visible) {
+    opacity: 1;
+  }
+  /* подсветка цели при переходе по якорю */
+  :global(:is(h1, h2, h3, h4, h5, h6):target) {
+    scroll-margin-top: 5rem;
+    background: linear-gradient(90deg, rgb(59 130 246 / 0.15), transparent 60%);
+    border-radius: 0.25rem;
+  }
+</style>

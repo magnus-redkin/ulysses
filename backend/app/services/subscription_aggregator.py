@@ -5,62 +5,75 @@ import httpx
 
 from app.config import settings
 from app.services.node_manager import node_manager
-from app.services.rf_node_config import build_rf_outbound
 
 logger = logging.getLogger(__name__)
 
 SERVICE_TYPES = {"selector", "urltest", "direct", "block", "dns", "bypass"}
 UNSUPPORTED_TYPES = {"dnstt", "socks", "naive", "ssh"}
 
-# Транспорты, попадающие в Simple
-SIMPLE_TRANSPORTS = {"", "grpc", "http"}
+# Транспорт, который понимает ТОЛЬКО Hiddify (форк sing-box)
+HIDDIFY_ONLY_TRANSPORTS = {"xhttp"}
 
 
-def _flag(code: str) -> str:
-    code = (code or "").upper()
-    if len(code) != 2 or not code.isalpha():
-        return "🏳️"
-    return chr(0x1F1E6 + ord(code[0]) - ord("A")) + chr(0x1F1E6 + ord(code[1]) - ord("A"))
+PROTOCOL_NAMES = {
+    "vless": "VLESS",
+    "vmess": "VMess",
+    "trojan": "Trojan",
+    "hysteria2": "Hysteria2",
+    "hysteria": "Hysteria",
+    "tuic": "TUIC",
+    "shadowsocks": "Shadowsocks",
+    "wireguard": "WireGuard",
+}
 
+
+def _protocol_signature(ob: dict) -> str:
+    """Сигнатура для группировки одинаковых протоколов."""
+    parts = [str(ob.get("type", "?"))]
+    tls = ob.get("tls") or {}
+    if (tls.get("reality") or {}).get("enabled"):
+        parts.append("reality")
+    transport = (ob.get("transport") or {}).get("type")
+    if transport:
+        parts.append(transport)
+    flow = ob.get("flow")
+    if flow:
+        parts.append(flow)
+    return "|".join(parts)
+
+
+def _protocol_display_name(ob: dict) -> str:
+    """Человеческое имя протокола: 'VLESS Reality', 'Hysteria2', 'VLESS xhttp'."""
+    t = ob.get("type", "unknown")
+    parts = [PROTOCOL_NAMES.get(t, t.upper())]
+    tls = ob.get("tls") or {}
+    if (tls.get("reality") or {}).get("enabled"):
+        parts.append("Reality")
+    transport = (ob.get("transport") or {}).get("type")
+    if transport:
+        parts.append(transport)
+    return " ".join(parts)
+
+def _make_leaf_tag(node: dict, ob: dict, index: int = 0) -> str:
+    """Тег листа без стран и флагов: 'VLESS Reality 1', 'VLESS Reality 2'."""
+    proto = _protocol_display_name(ob)
+    return f"{proto} {index}" if index else proto
 
 def _is_proxy_outbound(ob: dict) -> bool:
     ob_type = ob.get("type")
     return ob_type not in SERVICE_TYPES and ob_type not in UNSUPPORTED_TYPES
 
 
-def _is_simple_outbound(ob: dict) -> bool:
-    if ob.get("type") != "vless":
+def _is_supported_in_mode(ob: dict, mode: str) -> bool:
+    """Проверяет, допустим ли outbound в данном режиме."""
+    if not _is_proxy_outbound(ob):
         return False
-    reality = ob.get("tls", {}).get("reality", {})
-    if not reality.get("enabled"):
-        return False
-    transport_type = ob.get("transport", {}).get("type", "")
-    return transport_type in SIMPLE_TRANSPORTS
+    if mode == "compat":
+        transport = (ob.get("transport") or {}).get("type")
+        if transport in HIDDIFY_ONLY_TRANSPORTS:
+            return False
+    return True
 
-
-def _make_human_tag(node: dict, outbound: dict, index: int = 0) -> str:
-    country = (node.get("code") or "??").upper()
-    flag = _flag(country)
-
-    proto = outbound.get("type", "unknown").upper()
-    tls = outbound.get("tls", {})
-    if tls.get("reality", {}).get("enabled"):
-        transport = "Reality"
-        ttype = outbound.get("transport", {}).get("type")
-        if ttype:
-            transport += f" {ttype}"
-    elif outbound.get("transport"):
-        transport = outbound["transport"].get("type", "")
-    else:
-        transport = ""
-
-    base = f"{flag} {country} — {proto}"
-    if transport:
-        base += f" {transport}"
-
-    if index > 0:
-        base += f" ({index + 1})"
-    return base
 
 async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> Optional[dict]:
     node_id = node.get("id", "unknown")
@@ -91,26 +104,32 @@ async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> Optional[dic
         logger.error(f"❌ Ошибка соединения с {node_id}: {e}")
         return None
 
-
 def _build_config(
     configs: List[dict],
     nodes: List[dict],
-    mode: str,
+    mode: str = "full",
 ) -> Dict:
-    """Собирает итоговый sing-box конфиг для режима simple / advanced."""
-    is_filter = _is_simple_outbound if mode == "simple" else _is_proxy_outbound
+    """
+    Плоская структура:
+        proxy (selector) → [Auto, <все листья>]
+        Auto (urltest)   → [<все листья>]
 
+    Теги листьев: 'VLESS Reality', 'VLESS Reality 2', 'Hysteria2', 'Hysteria2 2' и т.д.
+    Уникальность обеспечивается нумерацией внутри группы одного протокола.
+    Флаги стран Hiddify рисует сам по GeoIP сервера.
+    """
+    # 1. Сбор outbound'ов с нод
     combined = []
     for node, config in zip(nodes, configs):
         if not config:
             continue
         for ob in config.get("outbounds", []):
-            if is_filter(ob):
+            if _is_supported_in_mode(ob, mode):
                 new_ob = ob.copy()
                 new_ob.pop("tunnel-per-resolver", None)
                 combined.append((node, new_ob))
 
-    # Дедупликация
+    # 2. Дедупликация
     seen = set()
     deduped = []
     for node, ob in combined:
@@ -126,34 +145,44 @@ def _build_config(
             seen.add(key)
             deduped.append((node, ob))
 
-    # Уникальные теги
-    tag_counts = {}
-    final_outbounds = []
-    for node, ob in deduped:
-        new_tag = _make_human_tag(node, ob, 0)
-        if new_tag in tag_counts:
-            tag_counts[new_tag] += 1
-            new_tag = f"{new_tag} ({tag_counts[new_tag]})"
-        else:
-            tag_counts[new_tag] = 0
-        ob["tag"] = new_tag
-        final_outbounds.append(ob)
-
-    if not final_outbounds:
+    if not deduped:
         return {}
 
-    proxy_tags = [ob["tag"] for ob in final_outbounds]
+    # 3. Группируем по сигнатуре протокола, чтобы нумеровать внутри группы
+    groups: dict = {}
+    for node, ob in deduped:
+        sig = _protocol_signature(ob)
+        groups.setdefault(sig, []).append((node, ob))
 
+    leaves = []
+    leaf_tags = []
+    used = set()
+
+    for sig, group in groups.items():
+        for i, (node, ob) in enumerate(group):
+            # Первый без номера, остальные — 2, 3, ...
+            tag = _make_leaf_tag(node, ob, index=i + 1 if i > 0 else 0)
+            base = tag
+            n = 1
+            while tag in used:
+                n += 1
+                tag = f"{base} ({n})"
+            used.add(tag)
+            ob["tag"] = tag
+            leaves.append(ob)
+            leaf_tags.append(tag)
+
+    # 4. Top-level selector + urltest
     selector = {
         "type": "selector",
         "tag": "proxy",
-        "outbounds": ["Auto", *proxy_tags],
+        "outbounds": ["Auto", *leaf_tags],
         "interrupt_exist_connections": True,
     }
-    urltest = {
+    auto_urltest = {
         "type": "urltest",
         "tag": "Auto",
-        "outbounds": proxy_tags,
+        "outbounds": leaf_tags,
         "url": "https://www.gstatic.com/generate_204",
         "interval": "10m",
         "tolerance": 200,
@@ -161,17 +190,16 @@ def _build_config(
 
     outbounds = [
         selector,
-        urltest,
+        auto_urltest,
         {"type": "direct", "tag": "direct"},
-        *final_outbounds,
+        *leaves,
     ]
 
+    # 5. Route и DNS
     route = {
         "auto_detect_interface": True,
         "final": "proxy",
-            "default_domain_resolver": {
-            "server": "google"
-        },
+        "default_domain_resolver": {"server": "google"},
         "rules": [
             {"action": "sniff"},
             {"protocol": "dns", "action": "hijack-dns"},
@@ -180,95 +208,40 @@ def _build_config(
 
     dns = {
         "servers": [
-            {
-                "type": "tls",
-                "tag": "cf-tls",
-                "server": "1.1.1.1",
-                "detour": "proxy",
-            },
-            {
-                "type": "udp",
-                "tag": "google",
-                "server": "8.8.8.8"
-                #"detour": "direct",
-            },
+            {"type": "tls", "tag": "cf-tls", "server": "1.1.1.1", "detour": "proxy"},
+            {"type": "udp", "tag": "google", "server": "8.8.8.8"},
         ],
         "final": "google",
     }
 
     return {"outbounds": outbounds, "route": route, "dns": dns}
 
-def _inject_rf_node(config: dict, hiddify_uuid: str) -> dict:
+
+
+async def aggregate_subscriptions(hiddify_uuid: str, mode: str = "full") -> Optional[Dict]:
     """
-    Добавляет RF outbound в конфиг, но НЕ в selector 'proxy'.
-    RF-нода доступна только через route rule: .ru/.рф идут через неё.
-    Пользователь не может выбрать RF вручную — поэтому не потеряет Telegram.
+    Возвращает готовый конфиг для подписки.
+
+    mode="full"    — все протоколы, включая xhttp. Hiddify.
+    mode="compat"  — без xhttp. Happ, Nekoray, v2rayNG, sing-box CLI.
     """
-    if not config:
-        return config
-
-    rf = build_rf_outbound(hiddify_uuid)
-    if not rf:
-        return config
-
-    outbounds = config.get("outbounds", [])
-    rf_tag = rf["tag"]
-
-    # Идемпотентность
-    if any(ob.get("tag") == rf_tag for ob in outbounds):
-        return config
-
-    outbounds.append(rf)
-    config["outbounds"] = outbounds
-
-    # 🇷🇺 Split-routing: .ru/.рф автоматически через RF-ноду
-    route = config.setdefault("route", {})
-    rules = route.setdefault("rules", [])
-
-    if not any(r.get("outbound") == rf_tag for r in rules):
-        rules.append({
-            # "domain_suffix": [".ru", ".рф", ".xn--p1ai"],
-            "domain_suffix": [".ru", ".xn--p1ai"],   # .рф убран
-            "outbound": rf_tag,
-        })
-
-    logger.info(
-        f"🇷🇺 [RF-NODE] outbound добавлен (только route-rule), тег '{rf_tag}'"
-    )
-    return config
-
-
-
-async def aggregate_subscriptions(hiddify_uuid: str) -> Dict:
-    """
-    Возвращает оба режима сразу:
-        {
-            "simple":   {...},
-            "advanced": {...}
-        }
-    """
-    logger.info(f"🚀 Агрегация для UUID {hiddify_uuid}")
+    logger.info(f"🚀 Агрегация для UUID {hiddify_uuid} (mode={mode})")
     nodes = node_manager.get_active_hfm_nodes()
     if not nodes:
         logger.error("❌ Нет доступных HFM нод")
-        return {}
+        return None
 
     configs = []
     for node in nodes:
         cfg = await fetch_singbox_from_node(node, hiddify_uuid)
         configs.append(cfg)
 
-    simple = _build_config(configs, nodes, "simple")
-    advanced = _build_config(configs, nodes, "advanced")
+    cfg = _build_config(configs, nodes, mode=mode)
+    if not cfg:
+        logger.error("❌ Не удалось собрать конфиг")
+        return None
 
-    # 🇷🇺 Встраиваем RF-ноду (в оба режима, но без Auto)
-    simple = _inject_rf_node(simple, hiddify_uuid)
-    advanced = _inject_rf_node(advanced, hiddify_uuid)
-
-
-    if not simple and not advanced:
-        logger.error("❌ Не удалось собрать ни один конфиг")
-        return {}
-
-    logger.info(f"✅ Готово: simple={len(simple.get('outbounds', []))}, advanced={len(advanced.get('outbounds', []))}")
-    return {"simple": simple, "advanced": advanced}
+    logger.info(
+        f"✅ Готово: mode={mode}, outbounds={len(cfg.get('outbounds', []))}"
+    )
+    return {"main": cfg}

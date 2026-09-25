@@ -84,8 +84,8 @@ async def create_invoice_logic(
             return {
                 "status": "free_tariff",
                 "hiddify_uuid": user["hiddify_uuid"],
-                "simple_link": result["simple_link"],
-                "advanced_link": result["advanced_link"],
+                "global_link": result["global_link"],
+                "ru_link": result["ru_link"],
                 "expires_at": result["expires_at"],
                 "order_id": None,
             }
@@ -146,10 +146,10 @@ async def create_invoice_logic(
         await db.commit()
 
     except Exception as e:
-            logger.error(f"❌ Platega error for {new_attempt.id}: {e}")
-            new_attempt.status = "failed"
-            await db.commit()
-            raise RuntimeError("Platega unavailable")
+        logger.error(f"❌ Platega error for {new_attempt.id}: {e}")
+        new_attempt.status = "failed"
+        await db.commit()
+        raise RuntimeError("Platega unavailable")
 
     return {
         "status": "payment_required",

@@ -79,11 +79,11 @@ async def create_free_subscription(
     from app.services.rf_node_client import add_user as rf_add_user
     await rf_add_user(str(hiddify_uuid))
 
-    # 4. Ссылка на агрегатор подписок
+    # 4. Ссылки на агрегатор подписок
     links = build_subscription_links(hiddify_uuid)
     return {
-        "simple_link": links["simple_link"],
-        "advanced_link": links["advanced_link"],
+        "global_link": links["global_link"],
+        "ru_link": links["ru_link"],
         "expires_at": expires_at.isoformat(),
         "sub_id": sub_id,
         "success_nodes": len(nodes),

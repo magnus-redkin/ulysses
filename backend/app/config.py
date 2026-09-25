@@ -92,7 +92,6 @@ class Settings(BaseSettings):
     RF_NODE_FLOW: str = "xtls-rprx-vision"
     RF_NODE_API_URL: str = ""
     RF_NODE_API_TOKEN: str = ""
-    RF_NODE_TAG: str = "🇷🇺 RU"
 
     @property
     def DATABASE_URL(self) -> str:

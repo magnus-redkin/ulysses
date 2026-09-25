@@ -4,7 +4,7 @@ LOCALIZATION = {
     "ru": {
         "no_subscription_info": "ℹ️ <b>О сервисе Ulysses VPN</b>\n\n"
                         "Это защищённый персональный туннель для доступа к свободному интернету.\n\n"
-                        "У вас пока нет активной подписки. Выберите тариф, чтобы получить ссылки (Simple, Advanced) для подключения.\n\n"
+                        "У вас пока нет активной подписки. Выберите тариф, чтобы получить ссылки (Global, Russia) для подключения.\n\n"
                         "👉 <i>Выберите интересующий вас раздел:</i>",
         "status_title": "📊 <b>Статус подписки</b>\n\n",
         "status_active": "🟢 Активна",
@@ -26,14 +26,14 @@ LOCALIZATION = {
         "ticket_error": "⚠️ Сервис техподдержки временно перегружен. Пожалуйста, попробуйте отправить сообщение чуть позже.",
         "lang_changed": "✅ Язык интерфейса успешно изменен на Русский!",
         "choose_lang_title": "🌐 <b>Настройка языка / Language Settings</b>\n\nВыберите удобный язык интерфейса ниже:",
-        "about_text": "ℹ️ <b>О сервисе:</b>\n\nUlysses VPN — приватный доступ без лишних посредников.\n\n• Не используем Cloudflare и обход белых списков — работаем только на собственной инфраструктуре.\n• Каждому пользователю выдаём две ссылки: Simple (Telegram, YouTube) и Advanced (игры, продвинутые сценарии).\n• Никаких логов активности, только данные, необходимые для биллинга.",
+        "about_text": "ℹ️ <b>О сервисе:</b>\n\nUlysses VPN — приватный доступ без лишних посредников.\n\n• Не используем Cloudflare и обход белых списков — работаем только на собственной инфраструктуре.\n• Каждому пользователю выдаём две ссылки: Global (Telegram, YouTube) и Russia.\n• Никаких логов активности, только данные, необходимые для биллинга.",
         "rules_text": "📜 <b>Публичная оферта</b>:\nусловия договора на цифровые услуги и цифровые товары «Лаборатория Улисс». Оплата и/или оформление заказа означает акцепт оферты.\n\nПолный текст оферты доступен по адресу: <a href='https://ulysses.best'>https://ulysses.best</a>",
         "support_text": "🆘 <b>Служба технической поддержки</b>\n\nЕсли у вас возникли проблемы с настройкой подключения, оплатой заказа или активацией ключа, наша команда готова вам помочь!\n\n<b>Контакты для связи:</b>\n• Наш официальный канал поддержки - здесь.\n• Время работы: ежедневно с 09:00 до 21:00 (по МСК).\n\n<b>Важная информация по платежам:</b>\nЕсли ваш платёж через систему оплаты прошёл, но баланс или доступ в боте не обновился в течение 10 минут, пожалуйста, пришлите в чат поддержки <i>снимок экрана (скриншот) квитанции об оплате</i> или ID транзакции из истории платежей. Мы активируем ваш доступ вручную."
     },
     "en": {
         "no_subscription_info": "ℹ️ <b>About Ulysses VPN</b>\n\n"
                         "This is a secure personal tunnel for accessing the free internet.\n\n"
-                        "You don't have an active subscription yet. Choose a plan to get your connection links (Simple, Advanced).\n\n"
+                        "You don't have an active subscription yet. Choose a plan to get your connection links.\n\n"
                         "👉 <i>Select the section you are interested in:</i>",
         "status_title": "📊 <b>Subscription Status</b>\n\n",
         "status_active": "🟢 Active",
@@ -55,7 +55,7 @@ LOCALIZATION = {
         "ticket_error": "⚠️ The technical support service is temporarily overloaded. Please try sending your message a bit later.",
         "lang_changed": "✅ Interface language has been changed to English!",
         "choose_lang_title": "🌐 <b>Language Settings / Настройка языка</b>\n\nSelect your preferred interface language below:",
-        "about_text": "ℹ️ <b>About Service:</b>\n\nUlysses VPN — private access without middlemen..\n\n• No Cloudflare, no white-list bypass — we run on our own infrastructure.\n• Every user gets two links: Simple (Telegram, YouTube) and Advanced (gaming, advanced scenarios). \n• No activity logs; we only store data required for billing.",
+        "about_text": "ℹ️ <b>About Service:</b>\n\nUlysses VPN — private access without middlemen..\n\n• No Cloudflare, no white-list bypass — we run on our own infrastructure.\n• Every user gets two links: Global (Telegram, YouTube) and Russia. \n• No activity logs; we only store data required for billing.",
         "rules_text": "📜 <b>Public Offer</b>:\nTerms of service for digital services and digital goods of 'Ulysses Lab'. Payment and/or placing an order implies acceptance of the offer.\n\nFull text is available here: <a href='https://ulysses.best'>https://ulysses.best</a>",
         "support_text": "🆘 <b>Technical Support Service</b>\n\nIf you encounter any problems with configuring the connection, payment, or key activation, our team is ready to help!\n\n<b>Contacts:</b>\n• Our official support channel is here.\n• Working hours: daily from 09:00 to 21:00 (MSK).\n\n<b>Important Payment Information:</b>\nIf your payment went through, but the balance or access in the bot has not updated within 10 minutes, please send a <i>screenshot of the payment receipt</i> or the transaction ID to the support chat. We will activate your access manually."
     }
@@ -72,11 +72,13 @@ BILLING_LOC = {
         "btn_pay": "🚀 Перейти к оплате",
         "btn_change": "⬅️ Изменить тариф",
         "free_success": "🎉 <b>Ваш бесплатный тест-драйв Ulysses VPN успешно активирован!</b>\n\n"
-                        "🟢 <b>Simple</b> — для повседневного использования (Telegram, YouTube):\n"
-                        "<code>{simple_link}</code>\n\n"
-                        "🔴 <b>Advanced</b> — если Simple не работает или для игр:\n"
-                        "<code>{advanced_link}</code>\n\n"
-                        "💡 Tip: начните с Simple. Если медленно или не работает, попробуйте Advanced.\n\n"
+                        "🌍 <b>Global — для всего:</b>\n"
+                        "Telegram, YouTube, обычные сайты.\n"
+                        "<code>{global_link}</code>\n\n"
+                        "🇷🇺 <b>Russia — для российских сервисов:</b>\n"
+                        "Госуслуги, Сбер. <b>Telegram, YouTube в ней не работает.</b>\n"
+                        "<code>{ru_link}</code>\n\n"
+
                         "⏳ Срок действия: до <b>{exp}</b>\n\n"
                         "📥 <b>Краткая инструкция по подключению:</b>\n"
                         "1. Нажмите на поле со ссылкой выше, чтобы скопировать её.\n"
@@ -95,11 +97,13 @@ BILLING_LOC = {
         "btn_pay": "🚀 Proceed to Payment",
         "btn_change": "⬅️ Change Plan",
         "free_success": "🎉 <b>Your free Ulysses VPN trial has been successfully activated!</b>\n\n"
-                        "🟢 <b>Simple</b> — everyday use (Telegram, YouTube):\n"
-                        "<code>{simple_link}</code>\n\n"
-                        "🔴 <b>Advanced</b> — fallback or for gaming:\n"
-                        "<code>{advanced_link}</code>\n\n"
-                        "💡 Tip: start with Simple. If anything is slow or blocked, try Advanced.\n\n"
+                        "🌍 <b>Global — for everything:</b>\n"
+                        "Telegram, YouTube, regular websites.\n"
+                        "<code>{global_link}</code>\n\n"
+                        "🇷🇺 <b>Russia — for Russian services:</b>\n"
+                        "Gosuslugi, Sber. <b>YouTube does not work here.</b>\n"
+                        "<code>{ru_link}</code>\n\n"
+
                         "⏳ Valid until: <b>{exp}</b>\n\n"
                         "📥 <b>Quick setup guide:</b>\n"
                         "1. Tap on the link field above to copy it.\n"

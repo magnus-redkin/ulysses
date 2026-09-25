@@ -9,19 +9,14 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.config import settings
 from app.services.node_manager import node_manager
+from app.services.subscription_links import build_subscription_links
 
 logger = logging.getLogger(__name__)
 
-
 def _make_links(hiddify_uuid: str) -> dict:
-    domain = getattr(settings, "HIDDIFY_DOMAIN", None) or "ulysses.best"
-    base = f"https://{domain}/subscription/{hiddify_uuid}"
-    return {
-        "simple_link": f"{base}/simple#Ulysses-simple",
-        "advanced_link": f"{base}/advanced#Ulysses-advanced",
-    }
+    """Единая точка формирования ссылок (см. subscription_links.py)."""
+    return build_subscription_links(hiddify_uuid)
 
 
 async def get_user_balance(
@@ -94,8 +89,9 @@ async def get_user_balance(
             "tg_user_id": user["tg_user_id"],
             "tg_username": None,
             "db_id": user["user_id"],
-            "simple_link": links["simple_link"],
-            "advanced_link": links["advanced_link"],
+            "global_link": links["global_link"],
+            "ru_link": links["ru_link"],
+            "compat_link": links["compat_link"],
             "expires_at": None,
         }
 
@@ -124,8 +120,9 @@ async def get_user_balance(
         "tg_user_id": user["tg_user_id"],
         "tg_username": None,
         "db_id": user["user_id"],
-        "simple_link": links["simple_link"],
-        "advanced_link": links["advanced_link"],
+        "global_link": links["global_link"],
+        "ru_link": links["ru_link"],
+        "compat_link": links["compat_link"],
         "expires_at": expires_at.isoformat() if expires_at else None,
     }
 
