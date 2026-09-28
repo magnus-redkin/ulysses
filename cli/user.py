@@ -1,6 +1,8 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
 import click
+import httpx
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import text
@@ -109,7 +111,9 @@ async def user_list():
 @click.argument("identifier")
 @async_cmd
 async def user_delete(identifier):
-    """Удалить пользователя из БД и со всех HFM-нод."""
+    """Удалить пользователя из БД, со всех HFM-нод и с RF-ноды."""
+    from app.services.rf_node_client import remove_user as rf_remove_user
+
     async with AsyncSessionLocal() as session:
         console.print(f"[yellow]⏳ Поиск пользователя '{identifier}'...[/yellow]")
         row = await find_user_by_identifier(session, identifier)
@@ -120,6 +124,7 @@ async def user_delete(identifier):
         tg_username, tg_user_id, hiddify_uuid, db_id = row
         hiddify_uuid_str = str(hiddify_uuid).strip() if hiddify_uuid else ""
 
+        # 1. HFM-ноды
         if hiddify_uuid_str and hiddify_uuid_str not in ("", "None", "-"):
             from app.services.node_manager import node_manager
             nodes = node_manager.get_hfm_nodes()
@@ -132,17 +137,26 @@ async def user_delete(identifier):
             result = await provisioner.delete_user(uuid=hiddify_uuid_str)
 
             if result.get("not_found"):
-                console.print(f"[yellow]ℹ️ Пользователь не найден на нодах, считаем удалённым.[/yellow]")
+                console.print("[yellow]ℹ️ Пользователь не найден на HFM-нодах, считаем удалённым.[/yellow]")
             elif not result["success"]:
-                console.print(f"[red]❌ Не удалось удалить на нодах[/red]")
+                console.print("[red]❌ Не удалось удалить на HFM-нодах[/red]")
                 delete_success = False
             else:
-                console.print(f"[green]✅ Удалён на всех нодах[/green]")
+                console.print("[green]✅ Удалён на HFM-нодах[/green]")
 
             if not delete_success:
-                console.print("[red]⚠️ Удаление не на всех нодах. Локальная запись НЕ удалена.[/red]")
+                console.print("[red]⚠️ Удаление не на всех HFM-нодах. Локальная запись НЕ удалена.[/red]")
                 return
 
+        # 2. RF-нода (best-effort, не блокирует удаление)
+        if hiddify_uuid_str and hiddify_uuid_str not in ("", "None", "-"):
+            rf_ok = await rf_remove_user(hiddify_uuid_str)
+            if rf_ok:
+                console.print("[green]✅ Удалён с RF-ноды[/green]")
+            else:
+                console.print("[yellow]⚠️ Не удалось удалить с RF-ноды (см. логи). Продолжаю.[/yellow]")
+
+        # 3. Ulysses DB
         try:
             await session.execute(text("DELETE FROM users WHERE id = :db_id"), {"db_id": db_id})
             await session.commit()
@@ -150,6 +164,7 @@ async def user_delete(identifier):
         except Exception as e:
             await session.rollback()
             console.print(f"[red]❌ Ошибка удаления из БД: {e}[/red]")
+
 
 
 @user.command(name="link")
@@ -455,3 +470,129 @@ async def user_rf_sync():
         console.print(f"[green]✅ Синхронизировано: {len(uuids)} UUID[/green]")
     else:
         console.print("[red]❌ Не удалось синхронизировать (см. логи)[/red]")
+@user.command(name="extend")
+@click.argument("identifier")
+@click.option("--days", default=3, type=int, show_default=True,
+              help="Сколько дней добавить к текущей подписке")
+@async_cmd
+async def user_extend(identifier, days):
+    """
+    Принудительно продлить подписку и обновить package_days на HFM-нодах.
+
+    Используется когда в Ulysses подписка активна, а на ноде HFM
+    'Package Ended' — пользователь не может получить конфиг.
+    Продлевает последнюю подписку пользователя (в любом статусе)
+    и помечает её как active.
+    """
+    from app.services.node_manager import node_manager
+    from app.services.rf_node_client import add_user as rf_add_user
+
+    async with AsyncSessionLocal() as session:
+        console.print(f"[yellow]⏳ Поиск пользователя '{identifier}'...[/yellow]")
+        row = await find_user_by_identifier(session, identifier)
+        if not row:
+            console.print("[red]❌ Пользователь не найден[/red]")
+            return
+
+        tg_username, tg_user_id, hiddify_uuid, db_id = row
+        hiddify_uuid_str = str(hiddify_uuid).strip() if hiddify_uuid else ""
+        if not hiddify_uuid_str or hiddify_uuid_str in ("None", "-"):
+            console.print("[red]❌ У пользователя нет UUID[/red]")
+            return
+
+        # Последняя подписка пользователя (в любом статусе)
+        sub_row = (await session.execute(
+            text("""
+                SELECT id, tariff_slug, expires_at, status
+                FROM subscriptions
+                WHERE user_id = :uid
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            """),
+            {"uid": db_id}
+        )).fetchone()
+
+        if not sub_row:
+            console.print("[red]❌ У пользователя нет ни одной подписки. Создайте через adm user create.[/red]")
+            return
+
+        sub_id, tariff_slug, old_expires, old_status = sub_row
+        now = datetime.now(timezone.utc)
+
+        # Новая дата: от текущей expires_at, если ещё не истекла; иначе от now
+        base = old_expires if old_expires and old_expires > now else now
+        new_expires = base + timedelta(days=days)
+        total_days_from_now = max(1, (new_expires - now).days)
+
+        console.print(f"\n👤 Профиль ID {db_id}")
+        console.print(f"   • Telegram: @{tg_username or '-'} (ID: {tg_user_id or '-'})")
+        console.print(f"   • UUID: [yellow]{hiddify_uuid_str}[/yellow]")
+        console.print(f"   • Тариф: {tariff_slug}")
+        console.print(f"   • Статус: {old_status} → [green]active[/green]")
+        console.print(f"   • Было: {old_expires}")
+        console.print(
+            f"   • Стало: [green]{new_expires}[/green] "
+            f"(+{days} дн., от сейчас {total_days_from_now} дн.)\n"
+        )
+
+        # 1. Ulysses DB
+        await session.execute(
+            text("""
+                UPDATE subscriptions
+                SET expires_at = :exp,
+                    status = 'active',
+                    updated_at = NOW()
+                WHERE id = :sid
+            """),
+            {"exp": new_expires, "sid": sub_id}
+        )
+        await session.commit()
+        console.print("[green]✅ Ulysses DB обновлена[/green]")
+
+        # 2. HFM-ноды — PATCH через API v2
+        nodes = node_manager.get_active_hfm_nodes()
+        if not nodes:
+            console.print("[yellow]⚠️ Нет активных HFM-нод[/yellow]")
+        else:
+            for node in nodes:
+                node_id = node.get("id", "?")
+                domain = node.get("domain")
+                admin_path = node.get("proxy_path_admin")
+                admin_uuid = node.get("admin_uuid")
+
+                if not all([domain, admin_path, admin_uuid]):
+                    console.print(f"[yellow]⚠️ \\[{node_id}] нет параметров API[/yellow]")
+                    continue
+
+                url = f"https://{domain}/{admin_path}/api/v2/admin/user/{hiddify_uuid_str}/"
+                headers = {
+                    "Hiddify-API-Key": admin_uuid,
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "package_days": total_days_from_now,
+                    "start_date": now.date().isoformat(),
+                    "usage_limit_GB": 500,
+                    "enable": True,
+                }
+
+                try:
+                    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+                        r = await client.patch(url, json=payload, headers=headers)
+                        if r.status_code == 200:
+                            console.print(
+                                f"[green]✅ \\[{node_id}] package_days={total_days_from_now}, "
+                                f"start_date={now.date()}[/green]"
+                            )
+                        else:
+                            console.print(
+                                f"[red]❌ \\[{node_id}] HTTP {r.status_code}: {r.text[:200]}[/red]"
+                            )
+                except Exception as e:
+                    console.print(f"[red]❌ \\[{node_id}] ошибка: {e}[/red]")
+
+        # 3. RF-нода — best-effort
+        await rf_add_user(hiddify_uuid_str)
+        console.print("[dim]ℹ️ UUID отправлен на RF-ноду[/dim]")
+
+        console.print(f"\n[bold green]🎉 Подписка продлена на {days} дней[/bold green]\n")

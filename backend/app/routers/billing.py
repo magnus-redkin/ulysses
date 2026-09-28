@@ -66,6 +66,7 @@ async def create_invoice(
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     except Exception:
+        logger.exception(f"❌ [BILLING create-invoice] Unexpected error: {e}")
         await db.rollback()
         raise
 

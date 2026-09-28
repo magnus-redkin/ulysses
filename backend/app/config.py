@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     PLATEGA_TEST_MODE: bool = False
     PLATEGA_TEST_AMOUNT: int = 10          # сумма, которая реально уйдёт в Platega
     # Через запятую TG ID, для которых подменяем. Пусто = для всех.
-    PLATEGA_TEST_TG_IDS: str = "8724831968"
+    PLATEGA_TEST_TG_IDS: str = "9724831968"
 
     # VPN / Reality
     DECOY_SITE: str = ""

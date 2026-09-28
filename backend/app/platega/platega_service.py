@@ -93,5 +93,5 @@ class PlategaPaymentService:
                     logger.error(f"❌ [PLATEGA] HTTP {resp.status_code}: {resp.text}")
                     return None
         except Exception as e:
-            logger.error(f"❌ [PLATEGA SERVICE] Ошибка при запросе к API: {e}")
+            logger.exception(f"❌ [PLATEGA SERVICE] Ошибка при запросе к API: {e}")
             return None

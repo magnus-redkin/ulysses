@@ -65,7 +65,6 @@ def _is_proxy_outbound(ob: dict) -> bool:
 
 
 def _is_supported_in_mode(ob: dict, mode: str) -> bool:
-    """Проверяет, допустим ли outbound в данном режиме."""
     if not _is_proxy_outbound(ob):
         return False
     if mode == "compat":
@@ -74,8 +73,11 @@ def _is_supported_in_mode(ob: dict, mode: str) -> bool:
             return False
     return True
 
-
 async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> Optional[dict]:
+    """
+    Забирает plain-text подписку с ноды и парсит её в sing-box outbound'ы.
+    Используется /sub/, потому что /singbox/ не отдаёт xhttp-транспорты.
+    """
     node_id = node.get("id", "unknown")
     domain = node.get("domain")
     client_path = node.get("proxy_path_client")
@@ -84,25 +86,29 @@ async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> Optional[dic
         logger.error(f"❌ Нода {node_id}: нет domain или proxy_path_client")
         return None
 
-    url = f"https://{domain}/{client_path}/{hiddify_uuid}/singbox/?asn=unknown"
-    logger.info(f"📡 URL Sing-box: {url}")
+    url = f"https://{domain}/{client_path}/{hiddify_uuid}/sub/"
+    logger.info(f"📡 URL Sub: {url}")
 
     try:
         async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    logger.info(f"✅ Нода {node_id}: получено {len(data.get('outbounds', []))} outbounds")
-                    return data
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ Нода {node_id}: невалидный JSON: {e}. Начало: {response.text[:200]!r}")
-                    return None
-            logger.error(f"❌ Нода {node_id} вернула HTTP {response.status_code}")
-            return None
+            if response.status_code != 200:
+                logger.error(f"❌ Нода {node_id} вернула HTTP {response.status_code}")
+                return None
+
+            from app.services.sub_parser import parse_sub_text
+            outbounds = parse_sub_text(response.text)
+            if not outbounds:
+                logger.error(f"❌ Нода {node_id}: не распарсено ни одного outbound'а")
+                return None
+
+            logger.info(f"✅ Нода {node_id}: получено {len(outbounds)} outbounds")
+            return {"outbounds": outbounds}
+
     except Exception as e:
         logger.error(f"❌ Ошибка соединения с {node_id}: {e}")
         return None
+
 
 def _build_config(
     configs: List[dict],
@@ -140,6 +146,8 @@ def _build_config(
             ob.get("uuid", ob.get("password", "")),
             ob.get("transport", {}).get("type", ""),
             ob.get("transport", {}).get("path", ""),
+            ob.get("transport", {}).get("service_name", ""),   # ← для gRPC
+            (ob.get("tls") or {}).get("server_name", ""),      # ← SNI
         )
         if key not in seen:
             seen.add(key)
@@ -147,6 +155,35 @@ def _build_config(
 
     if not deduped:
         return {}
+
+    # 2.5. Ограничение: по одному outbound'у каждого (transport, reality)
+    #      на каждую ноду. Сокращает UI Hiddify с ~25 до ~6 профилей.
+    #      grpc+TLS без Reality отбрасываем — он есть только для старых клиентов,
+    #      а для остальных есть xhttp+TLS.
+    limited = []
+    seen_keys = set()
+    for node, ob in deduped:
+        node_id = node.get("id", "?")
+        proto = ob.get("type", "?")
+        transport_type = (ob.get("transport") or {}).get("type", "tcp")
+        reality_enabled = bool((ob.get("tls") or {}).get("reality", {}).get("enabled"))
+
+        # Reality + grpc — редко работает в Hiddify, пропускаем
+        if proto == "vless" and transport_type == "grpc" and reality_enabled:
+            continue
+
+        # grpc + TLS (без Reality) — пропускаем
+        if proto == "vless" and transport_type == "grpc" and not reality_enabled:
+            continue
+
+        key = (node_id, proto, transport_type, reality_enabled)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        limited.append((node, ob))
+
+    deduped = limited
+
 
     # 3. Группируем по сигнатуре протокола, чтобы нумеровать внутри группы
     groups: dict = {}
