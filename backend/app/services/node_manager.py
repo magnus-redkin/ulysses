@@ -1,3 +1,4 @@
+# app/services/node_manager.py
 import asyncio
 import json
 import logging
@@ -121,6 +122,22 @@ class NodeManager:
 
     def get_active_hfm_nodes(self) -> List[Dict]:
         return [n for n in self.nodes.values() if n.get("active", True)]
+
+    def get_xray_standalone_nodes(self) -> List[Dict]:
+        """Standalone Xray-ноды (Reality TCP/gRPC), не связанные с HFM."""
+        path = self.config_path.parent / "xray_standalone.json"
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            nodes = data.get("nodes", [])
+            for n in nodes:
+                n["active"] = True
+                n["type"] = "xray-standalone"
+            return nodes
+        except Exception as e:
+            logger.error(f"❌ Ошибка чтения xray_standalone.json: {e}")
+            return []
 
     def get_node(self, node_id: str) -> Dict:
         return self.nodes.get(node_id, {})

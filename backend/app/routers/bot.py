@@ -1,3 +1,4 @@
+# backend/app/routers/bot.py
 """
 Роутер для Telegram-бота.
 """

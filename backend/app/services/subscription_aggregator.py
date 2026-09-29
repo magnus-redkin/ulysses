@@ -1,3 +1,4 @@
+# app/services/subscription_aggregator.py
 import json
 import logging
 from typing import Dict, List, Optional
@@ -41,18 +42,37 @@ def _protocol_signature(ob: dict) -> str:
         parts.append(flow)
     return "|".join(parts)
 
-
 def _protocol_display_name(ob: dict) -> str:
-    """Человеческое имя протокола: 'VLESS Reality', 'Hysteria2', 'VLESS xhttp'."""
+    """
+    Человеческое имя тега: 'Reality', 'Reality xhttp', 'xhttp', 'gRPC'.
+    Без названия протокола (VLESS/VMess и т.д.) — клиент покажет его сам
+    из поля `type`, поэтому дублирование убрано.
+    """
     t = ob.get("type", "unknown")
-    parts = [PROTOCOL_NAMES.get(t, t.upper())]
+    parts = []
+
+    # Reality — самый важный маркер
     tls = ob.get("tls") or {}
     if (tls.get("reality") or {}).get("enabled"):
         parts.append("Reality")
+
+    # Транспорт
     transport = (ob.get("transport") or {}).get("type")
     if transport:
-        parts.append(transport)
+        # gRPC пишем заглавными — для читаемости
+        if transport.lower() == "grpc":
+            parts.append("gRPC")
+        elif transport.lower() == "xhttp":
+            parts.append("xhttp")
+        else:
+            parts.append(transport)
+
+    # Если ни Reality, ни транспорта нет (чистый TCP) — используем протокол
+    if not parts:
+        parts.append(PROTOCOL_NAMES.get(t, t.upper()))
+
     return " ".join(parts)
+
 
 def _make_leaf_tag(node: dict, ob: dict, index: int = 0) -> str:
     """Тег листа без стран и флагов: 'VLESS Reality 1', 'VLESS Reality 2'."""
@@ -108,6 +128,62 @@ async def fetch_singbox_from_node(node: dict, hiddify_uuid: str) -> Optional[dic
     except Exception as e:
         logger.error(f"❌ Ошибка соединения с {node_id}: {e}")
         return None
+
+def _build_xray_standalone_outbound(node: dict, hiddify_uuid: str) -> Optional[dict]:
+    """Строит sing-box outbound для standalone Xray Reality (TCP/gRPC)."""
+    ip = node.get("ip")
+    port = node.get("port")
+    sni = node.get("sni")
+    pbk = node.get("public_key")
+    sid = node.get("short_id")
+
+    if not all([ip, port, sni, pbk, sid]):
+        logger.error(f"❌ Standalone-нода {node.get('id')}: не хватает полей")
+        return None
+
+    outbound = {
+        "type": "vless",
+        "tag": node.get("name", node.get("id", "Xray")),
+        "server": ip,
+        "server_port": port,
+        "uuid": hiddify_uuid,
+        "tls": {
+            "enabled": True,
+            "server_name": sni,
+            "utls": {
+                "enabled": True,
+                "fingerprint": node.get("fingerprint", "firefox"),
+            },
+            "reality": {
+                "enabled": True,
+                "public_key": pbk,
+                "short_id": sid,
+            },
+        },
+    }
+
+    if node.get("flow"):
+        outbound["flow"] = node["flow"]
+
+    if node.get("multiplex"):
+        outbound["multiplex"] = node["multiplex"]
+
+    # Транспорт — по умолчанию TCP (без поля transport)
+    if node.get("transport") == "grpc":
+        outbound["transport"] = {
+            "type": "grpc",
+            "service_name": node.get("service_name", "grpc"),
+        }
+
+    return outbound
+
+
+def fetch_from_xray_standalone(node: dict, hiddify_uuid: str) -> Optional[dict]:
+    """Возвращает config-словарь {outbounds: [...]} для standalone-ноды."""
+    ob = _build_xray_standalone_outbound(node, hiddify_uuid)
+    if not ob:
+        return None
+    return {"outbounds": [ob]}
 
 
 def _build_config(
@@ -253,27 +329,32 @@ def _build_config(
 
     return {"outbounds": outbounds, "route": route, "dns": dns}
 
-
-
 async def aggregate_subscriptions(hiddify_uuid: str, mode: str = "full") -> Optional[Dict]:
-    """
-    Возвращает готовый конфиг для подписки.
-
-    mode="full"    — все протоколы, включая xhttp. Hiddify.
-    mode="compat"  — без xhttp. Happ, Nekoray, v2rayNG, sing-box CLI.
-    """
     logger.info(f"🚀 Агрегация для UUID {hiddify_uuid} (mode={mode})")
-    nodes = node_manager.get_active_hfm_nodes()
-    if not nodes:
+    hfm_nodes = node_manager.get_active_hfm_nodes()
+    if not hfm_nodes:
         logger.error("❌ Нет доступных HFM нод")
         return None
 
     configs = []
-    for node in nodes:
+    all_nodes = []
+
+    # HFM-ноды
+    for node in hfm_nodes:
         cfg = await fetch_singbox_from_node(node, hiddify_uuid)
         configs.append(cfg)
+        all_nodes.append(node)
 
-    cfg = _build_config(configs, nodes, mode=mode)
+    # Standalone Xray-ноды
+    standalone_nodes = node_manager.get_xray_standalone_nodes()
+    for node in standalone_nodes:
+        cfg = fetch_from_xray_standalone(node, hiddify_uuid)
+        configs.append(cfg)
+        all_nodes.append(node)
+        if cfg:
+            logger.info(f"✅ Standalone {node['id']}: добавлено {len(cfg['outbounds'])} outbound'ов")
+
+    cfg = _build_config(configs, all_nodes, mode=mode)
     if not cfg:
         logger.error("❌ Не удалось собрать конфиг")
         return None

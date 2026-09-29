@@ -1,4 +1,4 @@
-# ulysses-backend/app/main.py
+# backend/app/main.py
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
