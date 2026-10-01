@@ -29,7 +29,7 @@ wait_for_port() {
 
 stop_all() {
     echo -e "${YELLOW}⏹ Остановка всех сервисов...${NC}"
-    sudo systemctl stop ulysses-backend ulysses-bot ulysses-web ulysses-monitor 2>/dev/null || true
+    sudo systemctl stop ulysses-backend ulysses-bot ulysses-web ulysses-monitor ulysses-fingerprint 2>/dev/null || true
 
     # Убить dev-процессы, если запущены вручную
     sudo pkill -f "uvicorn backend.app.main" 2>/dev/null || true
@@ -50,6 +50,7 @@ start_prod() {
     sudo systemctl start ulysses-web
     sudo systemctl start ulysses-bot
     sudo systemctl start ulysses-monitor
+    sudo systemctl start ulysses-fingerprint
     sudo systemctl start ulysses-maintenance.timer
     echo -e "${GREEN}✅ Production сервисы запущены${NC}"
     wait_for_port 8000 15
@@ -114,6 +115,20 @@ start_dev() {
             exit 1
         fi
     fi
+
+    # Fingerprint (опционально, обычно только в prod)
+    if sudo lsof -i :9443 >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️ Fingerprint уже запущен${NC}"
+    else
+        echo -e "${BLUE}🚀 Запуск fingerprint...${NC}"
+        (cd backend && PYTHONPATH=.. ../.venv/bin/python run_fingerprint.py > /tmp/ulysses-fingerprint.log 2>&1 &)
+        sleep 2
+        if sudo lsof -i :9443 >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Fingerprint запущен${NC}"
+        else
+            echo -e "${RED}❌ Fingerprint не запустился! Лог: /tmp/ulysses-fingerprint.log${NC}"
+        fi
+    fi
 }
 
 show_status() {
@@ -123,6 +138,7 @@ show_status() {
         "ulysses-web.service"
         "ulysses-bot.service"
         "ulysses-monitor.service"
+        "ulysses-fingerprint.service"
     )
     echo "╔════════════════════════════════════════════════════════════╗"
     echo "║        Ulysses Lab - Статус сервисов                      ║"
@@ -150,6 +166,7 @@ show_status() {
     check_port 3000 "Web (prod)"
     check_port 5173 "Web (dev)"
     check_port 5432 "PostgreSQL"
+    check_port 9443 "Fingerprint"
 }
 
 check_port() {

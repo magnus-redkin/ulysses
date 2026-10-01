@@ -244,13 +244,14 @@ def _build_config(
         transport_type = (ob.get("transport") or {}).get("type", "tcp")
         reality_enabled = bool((ob.get("tls") or {}).get("reality", {}).get("enabled"))
 
-        # Reality + grpc — редко работает в Hiddify, пропускаем
-        if proto == "vless" and transport_type == "grpc" and reality_enabled:
-            continue
+        # Пропускаем gRPC только для HFM-нод.
+        # Standalone Xray использует Reality gRPC — он рабочий, оставляем.
+        if node.get("type") != "xray-standalone":
+            if proto == "vless" and transport_type == "grpc" and reality_enabled:
+                continue
+            if proto == "vless" and transport_type == "grpc" and not reality_enabled:
+                continue
 
-        # grpc + TLS (без Reality) — пропускаем
-        if proto == "vless" and transport_type == "grpc" and not reality_enabled:
-            continue
 
         key = (node_id, proto, transport_type, reality_enabled)
         if key in seen_keys:

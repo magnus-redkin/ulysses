@@ -66,6 +66,13 @@
 
 
       <p class="pb-2">
+        • <a href="/fingerprint/" class="underline hover:text-white transition">
+          <b>{locale.current === 'ru' ? 'Ваш цифровой след' : 'Your digital footprint'}</b>
+        </a>
+      </p>
+
+
+      <p class="pb-2">
         {locale.current === 'ru'
           ? '• Путеводитель по выживанию и обходу блокировок: '
           : '• A guide to survival and bypassing censorship: '}
@@ -73,6 +80,8 @@
           <b>{locale.current === 'ru' ? 'Книга Джунглей' : 'Jungle Book'}</b>
         </a>
       </p>
+
+
 
       <p class="my-6 font-bold">
         {locale.current === 'ru' ? 'Нужно сделать две вещи: скачать и установить клиент и оформить подписку' : 'You need to do two things: download and install the client, and sign up for a subscription'}:

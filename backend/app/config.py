@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     HOST_API_KEY: str = ""
     HIDDIFY_DOMAIN: str = "ulysses.best"
 
+    # --- Fingerprint service ---
+    FINGERPRINT_HOST: str = "0.0.0.0"
+    FINGERPRINT_PORT: int = 9443
+    FINGERPRINT_CERT: str = "/etc/letsencrypt/live/ulysses.best/fullchain.pem"
+    FINGERPRINT_KEY: str = "/etc/letsencrypt/live/ulysses.best/privkey.pem"
+
 
     # --- RF-нода (российский exit) ---
     RF_NODE_ENABLED: bool = False
