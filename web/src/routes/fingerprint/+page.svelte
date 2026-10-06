@@ -620,7 +620,7 @@
       {/if}
 
       <div class="mt-6 pt-6 border-t border-slate-800">
-        <a href="/junglebook/mitm-risks" class="text-blue-400 hover:text-blue-300 text-sm">📖 Как читать результат и почему это важно →</a>
+        <a href="/junglebook/mitm_risks" class="text-blue-400 hover:text-blue-300 text-sm">📖 Как читать результат и почему это важно →</a>
       </div>
     </section>
 

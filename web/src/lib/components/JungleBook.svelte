@@ -26,18 +26,38 @@
       { title: 'Как выбрать VPN?', chapter: true },
       { slug: 'how-to-choose-vpn', title: 'Критерии устойчивости в эпоху жесткой цензуры' },
       { slug: 'whitelists', title: 'Белые списки' },
+
+      { title: 'Температура по больнице', chapter: true },
+      { slug: 'golden-shield', title: 'Золотой щит' },
+      { slug: 'india-intranet', title: 'Индия' },
+      { slug: 'europe', title: 'Европа' },
+      { slug: 'usa-censorship', title: 'США' },
+      { slug: 'israel-censorship', title: 'Израиль' },
+      { slug: 'russia-censorship', title: 'Россия' },
+      { slug: 'other-censorship', title: '...и нигде не лучше' },
+
+      { title: 'Цифровая гигиена', chapter: true },
+      { slug: 'fingerprint', title: 'Браузерный отпечаток' },
+      { slug: 'leaks', title: 'Проверка утечек' },
+      { slug: 'mitm-risks', title: 'Почему VPN не изменяет TLS-отпечаток' },
+      { slug: 'tls-cloudflare', title: 'Cloudflare и парадокс доверия' },
+
       { title: 'Клиенты', chapter: true },
+      { slug: 'download-client', title: 'Выбор клиента для прокси и VPN' },
       { slug: 'two_links', title: 'Почему две ссылки, Global и Russia?' },
       { slug: 'client', title: 'Настройки клиента Hiddify' },
       { slug: 'v2rayN-Hiddify', title: 'v2rayN vs. Hiddify-Client vs. Happ' },
+
       { title: 'Справка по Протоколам и Транспортам', chapter: true },
       { slug: 'classic-protocols', title: 'Прокси-Протоколы: VLESS, VMess, Trojan, Shadowsocks (версии AEAD и 2022), Mieru' },
       { slug: 'udp-protocols', title: 'Udp-Ориентированные Высокоскоростные Протоколы: Hysteria2, TUIC, WireGuard' },
       { slug: 'mask', title: 'Технологии Маскировки и Защиты Трафика: Reality, ShadowTLS' },
       { slug: 'transports', title: 'Сетевые Транспорты и Обертки: TCP, WebSockets, gRPC, HTTPUpgrade, xHTTP' },
       { slug: 'additional-services', title: 'Вспомогательные и Встроенные Сервисы: SSH Proxy, MTProto, DNS over HTTPS' },
+
       { title: 'Архитектура Hiddify', chapter: true },
       { slug: 'xray-singbox', title: 'Xray vs. Singbox' },
+
       { slug: 'links', title: 'полезные ссылки' },
     ],
     en: [
